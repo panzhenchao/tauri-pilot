@@ -239,6 +239,18 @@ pub(crate) enum AijiaCommand {
         #[arg(long, default_value_t = false)]
         wait_fresh: bool,
     },
+    /// Fill the login form (#account + #password) and click "登录"; wait until
+    /// the LoginPage unmounts. Returns {ok, reason?} so e2e scripts can detect
+    /// auth failures (wrong password, locked account) without scraping DOM.
+    Login {
+        #[arg(long)]
+        account: String,
+        #[arg(long)]
+        password: String,
+        /// Max seconds to wait for LoginPage to unmount after submit.
+        #[arg(long, default_value = "20")]
+        timeout: u64,
+    },
     /// Insert text into the Tiptap editor via execCommand.
     TypeMessage { text: String },
     /// Click the send button.
@@ -322,6 +334,327 @@ pub(crate) enum AijiaCommand {
         #[arg(long, default_value = "e2e-test-")]
         prefix: String,
     },
+    /// Click a top-level sidebar nav entry (data-aijia-nav={page}).
+    Goto {
+        /// One of: home, employees, expert-teams, skill-center, schedules, channel.
+        page: String,
+        /// Wait until the corresponding route loads (up to 5s) before returning.
+        #[arg(long, default_value_t = false)]
+        wait: bool,
+    },
+    /// Click the cancel or confirm button inside a Radix AlertDialog
+    /// (matched by data-aijia-confirm-action). Waits for the dialog to appear
+    /// up to --timeout seconds.
+    HandleDialog {
+        /// `accept` clicks the confirm button; `dismiss` clicks cancel.
+        #[arg(long)]
+        action: String,
+        #[arg(long, default_value = "10")]
+        timeout: u64,
+    },
+    /// Dump tool calls that happened in a turn, as recorded by chatStore.
+    /// Defaults to the last turn (the assistant message after the most
+    /// recent user message). `--turn N` selects the N-th turn (0-based).
+    ToolCalls {
+        /// `last` (default) or a 0-based turn index.
+        #[arg(long, default_value = "last")]
+        turn: String,
+    },
+    /// Scan currently-rendered tool bubbles in the chat DOM (independent of
+    /// `ui-message` filtering). Surfaces UI-level state (spinner / expanded /
+    /// result count / first URL / error text) for visual-render assertions.
+    ToolBubble {
+        /// `last` (default) or a 0-based turn index.
+        #[arg(long, default_value = "last")]
+        turn: String,
+    },
+    /// Open the schedules new-agenda editor: click `[data-aijia-agenda-new]`.
+    /// Pre: schedules page is active. Post: editor sheet `[data-aijia-agenda-editor]`
+    /// is mounted (not waited — chain `agenda-wait-editor` if needed).
+    AgendaOpenNew,
+    /// Wait until the agenda editor sheet is mounted.
+    AgendaWaitEditor {
+        #[arg(long, default_value = "5")]
+        timeout: u64,
+    },
+    /// Fill one field inside the open agenda editor.
+    /// `--field` ∈ `title` | `prompt` (text inputs).
+    AgendaFill {
+        #[arg(long)]
+        field: String,
+        #[arg(long)]
+        value: String,
+    },
+    /// Pick the agenda editor's "频率" select. `--value` ∈
+    /// `once` | `daily` | `weekly` | `monthly` | `yearly` (CLI alias maps to
+    /// editor's internal `one_shot|daily|...`).
+    AgendaSetFrequency {
+        #[arg(long)]
+        value: String,
+    },
+    /// Fill the agenda editor's "开始时间" datetime-local input.
+    /// `--value` is `YYYY-MM-DDTHH:MM` (matches `datetime-local` browser format).
+    AgendaSetStartAt {
+        #[arg(long)]
+        value: String,
+    },
+    /// Pick the agenda editor's "执行员工" native select by employee `name`
+    /// (substring match against option text — `{avatar} {name} · {role}`).
+    AgendaSetEmployee {
+        #[arg(long)]
+        name: String,
+    },
+    /// Click the agenda editor's "保存" button. Returns `{ok, disabled?, reason}`.
+    /// Does NOT wait for editor to close — chain `agenda-wait-editor-closed`
+    /// or `agenda-wait-row` for that.
+    AgendaSave,
+    /// Click the agenda editor's "取消" button.
+    AgendaCancel,
+    /// Wait until the agenda editor sheet has unmounted.
+    AgendaWaitEditorClosed {
+        #[arg(long, default_value = "5")]
+        timeout: u64,
+    },
+    /// Wait for an agenda row with matching `--title` to appear in the list.
+    /// Returns `{ok, agendaId, status}` once visible.
+    AgendaWaitRow {
+        #[arg(long)]
+        title: String,
+        #[arg(long, default_value = "5")]
+        timeout: u64,
+    },
+    /// Click an action button on a single agenda row identified by `--title`.
+    /// `--action` ∈ `run-now` | `pause` | `resume` | `edit` | `cancel` | `restore` | `purge`.
+    /// `cancel` opens a ConfirmDialog — chain `handle-dialog --action accept`
+    /// to confirm; this command does NOT auto-confirm.
+    AgendaRowAction {
+        #[arg(long)]
+        title: String,
+        #[arg(long)]
+        action: String,
+    },
+    /// Click the named employee card on the employees page.
+    /// Pre: employees page is active. Pass exactly one of `--name` (substring
+    /// match against `[data-aijia-employee-name]`) or `--id` (exact match
+    /// against `[data-aijia-employee-id]`). Use `--id` when multiple employees
+    /// share the same name.
+    EmployeeOpenCard {
+        #[arg(long, conflicts_with = "id")]
+        name: Option<String>,
+        #[arg(long, conflicts_with = "name")]
+        id: Option<String>,
+    },
+    /// Wait until the employee drawer (`[data-aijia-employee-drawer]`) is mounted.
+    EmployeeWaitDrawer {
+        #[arg(long, default_value = "3")]
+        timeout: u64,
+    },
+    /// Click the drawer's "现在派活" button (`[data-aijia-employee-action="dispatch"]`).
+    /// Pre: drawer is open. Does NOT wait for chat route — caller polls
+    /// `where --json` for `sessionId` change.
+    EmployeeClickDispatch,
+    /// Close the employee drawer (click the close button or the sheet overlay).
+    EmployeeCloseDrawer,
+    /// Click the sidebar footer "设置" button (`[data-aijia-open-settings]`).
+    /// Does NOT wait — chain `settings-wait` for that.
+    OpenSettings,
+    /// Wait until the settings modal (`[data-aijia-settings-shell]`) is mounted.
+    SettingsWait {
+        #[arg(long, default_value = "3")]
+        timeout: u64,
+    },
+    /// Click a panel in the settings left menu.
+    /// `--key` ∈ `account` | `account-billing` | `archived` | `runtime` | `about`
+    /// (matches `SettingsModalKey`; disabled keys like `usage` / `permissions`
+    /// won't render).
+    SettingsSelectPanel {
+        #[arg(long)]
+        key: String,
+    },
+    /// Click the settings modal's close button (`[data-aijia-settings-action="close"]`).
+    SettingsClose,
+    /// Click the "退出登录" button on the General panel. Pre: settings open
+    /// AND panel = `account`. Returns `{ok}` on click; caller waits for
+    /// LoginPage to remount via separate probe (e.g. polling `where --json`
+    /// for `loggedIn === false`).
+    Logout,
+    /// Queue absolute file paths so that the next call to `pickAttachments()`
+    /// inside the composer returns these paths instead of opening the OS
+    /// file dialog. Dev-only — relies on `__aijia._pickAttachmentsMockQueue`.
+    /// One queue entry is consumed per `composer-click-plus` click.
+    ComposerQueueFiles {
+        /// Comma-separated absolute paths (`,` not allowed in filenames).
+        #[arg(long)]
+        paths: String,
+    },
+    /// Click the composer's "+" button (`[data-aijia-composer-plus]`).
+    /// If a queue entry was set via `composer-queue-files`, the OS dialog
+    /// is skipped and the queued paths flow through `makePendingAttachment`
+    /// → `insertAttachmentTokens` as if the user had picked them.
+    ComposerClickPlus,
+    /// Click the "雇佣员工" / 卡片市场入口按钮 (`[data-aijia-hire-button]`).
+    /// Pre: employees page (or home) is active. Post: HireWizard mounts.
+    /// `--variant template-market` 点顶部文字按钮；`--variant add-card` 点
+    /// 网格末尾的 `+` 卡片。默认 `template-market`。
+    HireOpen {
+        #[arg(long, default_value = "template-market")]
+        variant: String,
+    },
+    /// Wait until HireWizard (`[data-aijia-hire-wizard]`) is mounted.
+    HireWait {
+        #[arg(long, default_value = "3")]
+        timeout: u64,
+    },
+    /// Pick a template card on step 1 by template id or by name (substring).
+    /// Post: wizard advances to step 2 automatically.
+    HireSelectTemplate {
+        /// 模板 id（如 `builtin:xiaoyuan`）。优先按 id 精确匹配。
+        #[arg(long, conflicts_with = "name")]
+        id: Option<String>,
+        /// 模板名（substring 匹配 `data-aijia-hire-template-name`）。
+        #[arg(long, conflicts_with = "id")]
+        name: Option<String>,
+    },
+    /// Click `[data-aijia-hire-action="next"]` on step 2.
+    /// 若模板 `resourceConfigKind === 'none'` 且无 schema，next === save，
+    /// 雇佣直接完成。
+    HireNext,
+    /// Click `[data-aijia-hire-action="prev"]` on step 2 (returns to step 1).
+    HirePrev,
+    /// Fill a HireWizard form field. `--field` ∈ `name` | `cron`.
+    HireFill {
+        #[arg(long)]
+        field: String,
+        #[arg(long)]
+        value: String,
+    },
+    /// Click `[data-aijia-hire-action="save"]` (alias for `hire-next` 当
+    /// step 2 没有 step 3 时；step 3 的 resource-form 用 `resource-save`).
+    HireSave,
+    /// Read `data-aijia-employee-status` (running | has-report | needs-setup
+    /// Read `data-aijia-employee-status` (running | has-report | needs-setup
+    /// | idle), `data-aijia-employee-cron-enabled` (true | false | none),
+    /// and `data-aijia-employee-dispatch-disabled` (true when employee is
+    /// archived) from a card matched by `--name` or `--id` (mutually
+    /// exclusive). Use `--id` when multiple employees share the same name.
+    EmployeeStatus {
+        #[arg(long, conflicts_with = "id")]
+        name: Option<String>,
+        #[arg(long, conflicts_with = "name")]
+        id: Option<String>,
+    },
+    /// Click a single `[data-aijia-employee-action="<verb>"]` button inside
+    /// the open employee drawer. `--action` ∈ `dispatch` | `close` |
+    /// `view-chat` | `stop` | `edit-cron` | `toggle-cron` | `toggle-cron-badge` |
+    /// `add-cron-trigger` | `config-resource` | `fire`.
+    /// `fire` opens a Radix ConfirmDialog — chain `handle-dialog --action accept`.
+    EmployeeDrawerAction {
+        #[arg(long)]
+        action: String,
+    },
+    /// Click `[data-aijia-employee-action="pause-cron|resume-cron"]` on the
+    /// card itself (not inside the drawer). Useful to toggle cron without
+    /// opening the drawer first.
+    EmployeeCardToggleCron {
+        #[arg(long)]
+        name: String,
+    },
+    /// Fill a field in the currently-open ResourceConfigForm (any of the
+    /// 5 hand-tuned forms or the SchemaForm). Matches by
+    /// `[data-aijia-resource-field="<name>"]`. For MonitoringUrlsForm rows,
+    /// pass `--row N` to scope to the N-th row (0-based).
+    ResourceFill {
+        #[arg(long)]
+        field: String,
+        #[arg(long)]
+        value: String,
+        /// 0-based row index (MonitoringUrlsForm only). Omit to target the
+        /// first occurrence of the field (suitable for non-row forms).
+        #[arg(long)]
+        row: Option<usize>,
+    },
+    /// Click `[data-aijia-resource-action="add-row"]` (MonitoringUrlsForm).
+    ResourceAddRow,
+    /// Click `[data-aijia-resource-action="remove-row"]` in row N
+    /// (MonitoringUrlsForm).
+    ResourceRemoveRow {
+        #[arg(long)]
+        row: usize,
+    },
+    /// Click `[data-aijia-resource-action="save"]` in the open
+    /// ResourceConfigForm.
+    ResourceSave,
+    /// Click `[data-aijia-resource-action="cancel"]` in the open
+    /// ResourceConfigForm.
+    ResourceCancel,
+    /// Queue a single absolute folder path so the next call to
+    /// `pickLocalDirectory()` returns it instead of opening the OS folder
+    /// dialog. Dev-only — relies on `__aijia._pickDirectoryMockQueue`.
+    /// One queue entry is consumed per `workspace-pick --variant other`.
+    /// Downstream `authorizeLocalDirectory` IPC + composer state updates
+    /// run on the real path.
+    WorkspaceQueuePath {
+        #[arg(long)]
+        path: String,
+    },
+    /// Click the home composer's workspace trigger button
+    /// (`[data-aijia-workspace-trigger]`) to open the dropdown.
+    /// Pre: home page is active (composer is mounted).
+    WorkspaceOpenPicker,
+    /// Click one item inside the open workspace dropdown.
+    /// `--variant` ∈ `default` | `other` | `recent`. `recent` requires
+    /// `--path` to identify which recent entry to click. `other` triggers
+    /// the OS folder dialog (or consumes a queued mock path in dev).
+    WorkspacePick {
+        #[arg(long)]
+        variant: String,
+        /// Required when `--variant recent`: absolute path of the recent
+        /// workspace entry. Ignored for `default` / `other`.
+        #[arg(long)]
+        path: Option<String>,
+    },
+    /// Click an ExpertTeam card by name to start a new conversation with
+    /// that team. Pre: expert-teams page is active. Post: chat route flips
+    /// to the newly-created conversation.
+    ExpertTeamStart {
+        #[arg(long)]
+        name: String,
+    },
+    /// Queue a single absolute path so the next call to skill-center's
+    /// `openDialog()` (inside `handleImportDirectory` / `handleImportArchive`)
+    /// returns it instead of opening the OS dialog. Dev-only — relies on
+    /// `__aijia._pickSkillImportMockQueue`. One queue entry is consumed per
+    /// `skill-import-pick` click. The variant (directory vs archive) is
+    /// determined by which dropdown item is later clicked, not by the queued
+    /// path itself.
+    SkillImportQueue {
+        /// Absolute folder path (for `--variant directory`) or .zip file
+        /// path (for `--variant archive`).
+        #[arg(long)]
+        path: String,
+    },
+    /// Click the skill-center "导入技能" dropdown trigger Button
+    /// (`[data-aijia-skill-import-trigger]`). Pre: skill-center page is
+    /// active. Post: AppDropdown menu opens. Caller must chain
+    /// `skill-import-pick --variant ...` to pick the actual import variant.
+    SkillImportOpen,
+    /// Click one item inside the open skill-import dropdown.
+    /// `--variant` ∈ `directory` | `archive`. Selects
+    /// `[data-aijia-skill-import-action="<variant>"]` and clicks it.
+    /// If a queued mock path was set via `skill-import-queue`, the OS dialog
+    /// is skipped and the queued path flows through `runInstall(picked)` →
+    /// `installCustomSkill` → backend `install_custom_skill` (which auto
+    /// `refresh_skill_registry`s the in-memory store).
+    SkillImportPick {
+        #[arg(long)]
+        variant: String,
+    },
+    /// Dump skill cards currently rendered on the skill-center page.
+    /// Reads `[data-aijia-skill-card]` DOM nodes and returns
+    /// `[{id, source, title, version}]`. Use to verify imports landed in
+    /// catalog without opening individual cards. Pre: skill-center page
+    /// must be active.
+    SkillCards,
 }
 
 #[derive(Subcommand, Debug)]

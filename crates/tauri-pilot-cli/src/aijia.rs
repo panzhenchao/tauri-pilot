@@ -26,6 +26,9 @@ pub(crate) async fn dispatch(
     match cmd {
         AijiaCommand::HealthCheck => health_check(client, window).await,
         AijiaCommand::Where => where_state(client, window).await,
+        AijiaCommand::Login { account, password, timeout } => {
+            login(client, &account, &password, timeout, window).await
+        }
         AijiaCommand::NewTask { wait_fresh } => new_task(client, wait_fresh, window).await,
         AijiaCommand::TypeMessage { text } => type_message(client, &text, window).await,
         AijiaCommand::Send => send(client, window).await,
@@ -65,6 +68,103 @@ pub(crate) async fn dispatch(
         AijiaCommand::CleanupTestSessions { prefix } => {
             cleanup_test_sessions(client, &prefix, window).await
         }
+        AijiaCommand::Goto { page, wait } => goto(client, &page, wait, window).await,
+        AijiaCommand::HandleDialog { action, timeout } => {
+            handle_dialog(client, &action, timeout, window).await
+        }
+        AijiaCommand::ToolCalls { turn } => tool_calls(client, &turn, window).await,
+        AijiaCommand::ToolBubble { turn } => tool_bubble(client, &turn, window).await,
+        AijiaCommand::AgendaOpenNew => agenda_open_new(client, window).await,
+        AijiaCommand::AgendaWaitEditor { timeout } => {
+            agenda_wait_editor(client, timeout, true, window).await
+        }
+        AijiaCommand::AgendaWaitEditorClosed { timeout } => {
+            agenda_wait_editor(client, timeout, false, window).await
+        }
+        AijiaCommand::AgendaFill { field, value } => {
+            agenda_fill(client, &field, &value, window).await
+        }
+        AijiaCommand::AgendaSetFrequency { value } => {
+            agenda_set_frequency(client, &value, window).await
+        }
+        AijiaCommand::AgendaSetStartAt { value } => {
+            agenda_set_start_at(client, &value, window).await
+        }
+        AijiaCommand::AgendaSetEmployee { name } => {
+            agenda_set_employee(client, &name, window).await
+        }
+        AijiaCommand::AgendaSave => agenda_editor_action(client, "save", window).await,
+        AijiaCommand::AgendaCancel => agenda_editor_action(client, "cancel", window).await,
+        AijiaCommand::AgendaWaitRow { title, timeout } => {
+            agenda_wait_row(client, &title, timeout, window).await
+        }
+        AijiaCommand::AgendaRowAction { title, action } => {
+            agenda_row_action(client, &title, &action, window).await
+        }
+        AijiaCommand::EmployeeOpenCard { name, id } => {
+            employee_open_card(client, name.as_deref(), id.as_deref(), window).await
+        }
+        AijiaCommand::EmployeeWaitDrawer { timeout } => {
+            employee_wait_drawer(client, timeout, window).await
+        }
+        AijiaCommand::EmployeeClickDispatch => employee_click_dispatch(client, window).await,
+        AijiaCommand::EmployeeCloseDrawer => employee_close_drawer(client, window).await,
+        AijiaCommand::OpenSettings => open_settings(client, window).await,
+        AijiaCommand::SettingsWait { timeout } => settings_wait(client, timeout, window).await,
+        AijiaCommand::SettingsSelectPanel { key } => {
+            settings_select_panel(client, &key, window).await
+        }
+        AijiaCommand::SettingsClose => settings_close(client, window).await,
+        AijiaCommand::Logout => logout(client, window).await,
+        AijiaCommand::ComposerQueueFiles { paths } => {
+            composer_queue_files(client, &paths, window).await
+        }
+        AijiaCommand::ComposerClickPlus => composer_click_plus(client, window).await,
+        AijiaCommand::HireOpen { variant } => hire_open(client, &variant, window).await,
+        AijiaCommand::HireWait { timeout } => hire_wait(client, timeout, window).await,
+        AijiaCommand::HireSelectTemplate { id, name } => {
+            hire_select_template(client, id.as_deref(), name.as_deref(), window).await
+        }
+        AijiaCommand::HireNext => hire_action(client, "next", window).await,
+        AijiaCommand::HirePrev => hire_action(client, "prev", window).await,
+        AijiaCommand::HireSave => hire_action(client, "save", window).await,
+        AijiaCommand::HireFill { field, value } => {
+            hire_fill(client, &field, &value, window).await
+        }
+        AijiaCommand::EmployeeStatus { name, id } => {
+            employee_status(client, name.as_deref(), id.as_deref(), window).await
+        }
+        AijiaCommand::EmployeeDrawerAction { action } => {
+            employee_drawer_action(client, &action, window).await
+        }
+        AijiaCommand::EmployeeCardToggleCron { name } => {
+            employee_card_toggle_cron(client, &name, window).await
+        }
+        AijiaCommand::ResourceFill { field, value, row } => {
+            resource_fill(client, &field, &value, row, window).await
+        }
+        AijiaCommand::ResourceAddRow => resource_action(client, "add-row", None, window).await,
+        AijiaCommand::ResourceRemoveRow { row } => {
+            resource_action(client, "remove-row", Some(row), window).await
+        }
+        AijiaCommand::ResourceSave => resource_action(client, "save", None, window).await,
+        AijiaCommand::ResourceCancel => resource_action(client, "cancel", None, window).await,
+        AijiaCommand::WorkspaceQueuePath { path } => {
+            workspace_queue_path(client, &path, window).await
+        }
+        AijiaCommand::WorkspaceOpenPicker => workspace_open_picker(client, window).await,
+        AijiaCommand::WorkspacePick { variant, path } => {
+            workspace_pick(client, &variant, path.as_deref(), window).await
+        }
+        AijiaCommand::ExpertTeamStart { name } => expert_team_start(client, &name, window).await,
+        AijiaCommand::SkillImportQueue { path } => {
+            skill_import_queue(client, &path, window).await
+        }
+        AijiaCommand::SkillImportOpen => skill_import_open(client, window).await,
+        AijiaCommand::SkillImportPick { variant } => {
+            skill_import_pick(client, &variant, window).await
+        }
+        AijiaCommand::SkillCards => skill_cards(client, window).await,
     }
 }
 
@@ -154,20 +254,10 @@ async fn health_check(client: &mut Client, window: Option<&str>) -> Result<Value
 }
 
 async fn where_state(client: &mut Client, window: Option<&str>) -> Result<Value> {
-    let state = client
-        .call("state", with_window(None, window))
-        .await
-        .ok();
-    let url = state
-        .as_ref()
-        .and_then(|s| s.get("url"))
-        .cloned()
-        .unwrap_or(Value::Null);
-    let title = state
-        .as_ref()
-        .and_then(|s| s.get("title"))
-        .cloned()
-        .unwrap_or(Value::Null);
+    // 不再 bridge `state` 拿 url / title：lotus-app 是 SPA 单页应用，
+    // window.location 恒为 tauri://localhost/，document.title 恒为
+    // index.html 写死的 "AI小家 — 你的智能工作助手"——两者跟"用户在哪个面板"
+    // 毫无关系，留在输出里会误导 caller。真路由 = uiStore.route.kind。
 
     let store = eval_json(
         client,
@@ -178,6 +268,14 @@ async fn where_state(client: &mut Client, window: Option<&str>) -> Result<Value>
             const activeId = cs.activeConversationId;
             const stream = activeId ? cs.streamStates?.[activeId] : null;
             const conv = cs.conversations?.find(c => c.id === activeId);
+            // Auth-derived scope: `t_{tenantId}__u_{userId}` matches the
+            // on-disk users/ partition. Returns null when not logged in.
+            const auth = a.authStore?.getState?.();
+            const tenantId = auth?.tenant?.id ?? null;
+            const userId = auth?.user?.id ?? null;
+            const scope = (tenantId != null && userId != null)
+                ? ('t_' + tenantId + '__u_' + userId)
+                : null;
             return {
                 sessionId: activeId,
                 sessionName: conv?.title ?? null,
@@ -186,15 +284,35 @@ async fn where_state(client: &mut Client, window: Option<&str>) -> Result<Value>
                 hasToolCallBlock: !!(stream?.toolExecutions || cs.toolExecutions || []).some(t => t.status === 'executing'),
                 messageCount: (cs.messages || []).length,
                 lastError: stream?.lastError ?? null,
+                scope: scope,
+                tenantId: tenantId,
+                userId: userId,
+                loggedIn: !!auth?.isLoggedIn,
             };
         })()",
         window,
     )
     .await?;
 
-    let route = eval_json(client, "location.pathname", window)
-        .await
+    // route 来自 zustand uiStore.route（tagged union {kind, ...payload}）。
+    // 单 string `kind` 给 caller 用作 page 判断；完整 object 留在 `routeObj`
+    // 让需要 chat conversationId / channel sessionId 的 caller 也能拿到。
+    let route = eval_json(
+        client,
+        r"(() => {
+            const ui = window.__aijia?.uiStore?.getState?.();
+            if (!ui || !ui.route || typeof ui.route.kind !== 'string') return null;
+            return ui.route;
+        })()",
+        window,
+    )
+    .await
+    .unwrap_or(Value::Null);
+    let route_kind = route
+        .get("kind")
+        .cloned()
         .unwrap_or(Value::Null);
+
     let has_editor = eval_json(
         client,
         "(() => !!document.querySelector('.ProseMirror'))()",
@@ -204,9 +322,8 @@ async fn where_state(client: &mut Client, window: Option<&str>) -> Result<Value>
     .unwrap_or(Value::Bool(false));
 
     let mut out = serde_json::Map::new();
-    out.insert("url".into(), url);
-    out.insert("route".into(), route);
-    out.insert("title".into(), title);
+    out.insert("route".into(), route_kind);
+    out.insert("routeObj".into(), route);
     if let Value::Object(map) = store {
         for (k, v) in map {
             out.insert(k, v);
@@ -220,6 +337,148 @@ async fn where_state(client: &mut Client, window: Option<&str>) -> Result<Value>
     out.entry("model".to_string()).or_insert(Value::Null);
 
     Ok(Value::Object(out))
+}
+
+// ─── auth: login ─────────────────────────────────────────────────────────────
+
+async fn login(
+    client: &mut Client,
+    account: &str,
+    password: &str,
+    timeout: u64,
+    window: Option<&str>,
+) -> Result<Value> {
+    // LoginPage (`src/components/auth/LoginPage.tsx`) renders #account + #password
+    // inputs and a submit Button labelled `login.loginButtonLabel` = "登录".
+    //
+    // Ready signal: poll `authStore.{isLoggedIn, isAuthPending}` further below —
+    // NOT "LoginPage unmounted", because AuthGate shows <FullscreenLoader/>
+    // mid-request which also unmounts #account and would race a naive DOM probe.
+    //
+    // The inputs are React-controlled — value setter must go through the
+    // native prototype setter and dispatch an `input` event, otherwise React
+    // overwrites our value on the next render.
+    let acct_lit = js_string_literal(account);
+    let pwd_lit = js_string_literal(password);
+    let submit_script = format!(
+        r#"(() => {{
+            const acct = document.querySelector('#account');
+            const pwd = document.querySelector('#password');
+            if (!acct || !pwd) return {{ok: false, reason: 'login_form_not_found'}};
+
+            const proto = window.HTMLInputElement.prototype;
+            const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+
+            setter.call(acct, {acct});
+            acct.dispatchEvent(new Event('input', {{bubbles: true}}));
+            setter.call(pwd, {pwd});
+            pwd.dispatchEvent(new Event('input', {{bubbles: true}}));
+
+            // Scope the submit button lookup to the form that owns #account,
+            // so a stray type="submit" elsewhere on the page can't be picked.
+            const form = acct.closest('form');
+            if (!form) return {{ok: false, reason: 'login_form_root_not_found'}};
+            const btn = [...form.querySelectorAll('button[type="submit"]')]
+                .find(b => {{
+                    const t = (b.textContent || '').trim();
+                    return t === '登录' || t === '登录中…';
+                }});
+            if (!btn) return {{ok: false, reason: 'login_button_not_found'}};
+            if (btn.disabled) return {{ok: false, reason: 'login_button_disabled'}};
+            btn.click();
+            return {{ok: true}};
+        }})()"#,
+        acct = acct_lit,
+        pwd = pwd_lit,
+    );
+    let click = eval_json(client, &submit_script, window).await?;
+    if click.get("ok").and_then(Value::as_bool) != Some(true) {
+        return Ok(click);
+    }
+
+    // Poll authStore directly — DOM-based ready signals are unreliable
+    // because AuthGate renders <FullscreenLoader /> (which unmounts
+    // LoginPage and #account) during isAuthPending. A naive "#account
+    // disappeared = logged in" probe will fire mid-request and return
+    // a false positive even when the password is wrong.
+    //
+    // Truth source: authStore.{isLoggedIn, isAuthPending, tenant, user}.
+    // - isLoggedIn=true && isAuthPending=false → confirmed logged in
+    // - isAuthPending=true → request in flight, keep polling
+    // - isLoggedIn=false && isAuthPending=false → terminal failure;
+    //   read inline error from LoginPage if remounted
+    let probe_script = r#"(() => {
+        const auth = window.__aijia?.authStore?.getState?.();
+        if (!auth) return {ready: false, reason: 'authStore_missing'};
+        if (auth.isAuthPending) {
+            return {ready: false, phase: 'auth_pending'};
+        }
+        if (auth.isLoggedIn) {
+            return {
+                ready: true,
+                outcome: 'logged_in',
+                tenantId: auth.tenant?.id ?? null,
+                userId: auth.user?.id ?? null,
+            };
+        }
+        // Terminal not-logged-in: check LoginPage inline error.
+        const acct = document.querySelector('#account');
+        let inlineError = null;
+        if (acct) {
+            const err = [...document.querySelectorAll('.text-destructive')]
+                .map(el => (el.textContent || '').trim())
+                .find(t => t.length > 0);
+            if (err) inlineError = err;
+        }
+        if (inlineError) {
+            return {ready: true, outcome: 'login_failed', error: inlineError};
+        }
+        // Not pending, not logged in, no visible error yet — still
+        // transitional (e.g. between request reject and setError flush).
+        return {ready: false, phase: 'transitional'};
+    })()"#;
+
+    let deadline = Instant::now() + Duration::from_secs(timeout);
+    let mut last = Value::Null;
+    while Instant::now() < deadline {
+        let probe = eval_json(client, probe_script, window).await?;
+        last = probe.clone();
+        if probe.get("ready").and_then(Value::as_bool) == Some(true) {
+            let outcome = probe.get("outcome").and_then(Value::as_str).unwrap_or("");
+            return Ok(match outcome {
+                "logged_in" => {
+                    let tenant_id = probe.get("tenantId").cloned().unwrap_or(Value::Null);
+                    let user_id = probe.get("userId").cloned().unwrap_or(Value::Null);
+                    let scope = match (&tenant_id, &user_id) {
+                        (Value::Number(t), Value::Number(u)) => {
+                            Value::String(format!("t_{t}__u_{u}"))
+                        }
+                        _ => Value::Null,
+                    };
+                    json!({
+                        "ok": true,
+                        "outcome": "logged_in",
+                        "tenantId": tenant_id,
+                        "userId": user_id,
+                        "scope": scope,
+                    })
+                }
+                "login_failed" => json!({
+                    "ok": false,
+                    "reason": "login_failed",
+                    "error": probe.get("error").cloned().unwrap_or(Value::Null),
+                }),
+                _ => json!({"ok": false, "reason": "unknown_ready_outcome", "probe": probe}),
+            });
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    Ok(json!({
+        "ok": false,
+        "reason": "timeout",
+        "timeoutSec": timeout,
+        "lastProbe": last,
+    }))
 }
 
 // ─── compose path: new-task / type-message / send / cancel ───────────────────
@@ -755,6 +1014,1402 @@ async fn cleanup_test_sessions(
 }
 
 use base64::Engine as _;
+
+// ─── composer: attachment picker (queue + click +) ───────────────────────────
+
+async fn composer_queue_files(
+    client: &mut Client,
+    paths_csv: &str,
+    window: Option<&str>,
+) -> Result<Value> {
+    let paths: Vec<&str> = paths_csv
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if paths.is_empty() {
+        return Ok(json!({
+            "ok": false,
+            "reason": "no_paths",
+            "hint": "pass --paths as a comma-separated list of absolute paths",
+        }));
+    }
+    let paths_json = serde_json::to_string(&paths)?;
+    let script = format!(
+        r#"(() => {{
+            const aj = window.__aijia;
+            if (!aj) return {{ok: false, reason: 'dev_hooks_unavailable'}};
+            if (!Array.isArray(aj._pickAttachmentsMockQueue)) {{
+                aj._pickAttachmentsMockQueue = [];
+            }}
+            const paths = {paths};
+            aj._pickAttachmentsMockQueue.push(paths);
+            return {{
+                ok: true,
+                queued: paths.length,
+                queueDepth: aj._pickAttachmentsMockQueue.length,
+            }};
+        }})()"#,
+        paths = paths_json,
+    );
+    eval_json(client, &script, window).await
+}
+
+async fn composer_click_plus(client: &mut Client, window: Option<&str>) -> Result<Value> {
+    let script = r#"(() => {
+        const btn = document.querySelector('[data-aijia-composer-plus]');
+        if (!btn) return {ok: false, reason: 'composer_plus_button_not_found'};
+        if (btn.disabled) return {ok: false, reason: 'composer_plus_button_disabled'};
+        btn.click();
+        return {ok: true};
+    })()"#;
+    eval_json(client, script, window).await
+}
+
+// ─── settings + logout: atomic ──────────────────────────────────────────────
+
+async fn open_settings(client: &mut Client, window: Option<&str>) -> Result<Value> {
+    let script = r#"(() => {
+        const btn = document.querySelector('[data-aijia-open-settings]');
+        if (!btn) return {ok: false, reason: 'open_settings_button_not_found'};
+        btn.click();
+        return {ok: true};
+    })()"#;
+    eval_json(client, script, window).await
+}
+
+async fn settings_wait(
+    client: &mut Client,
+    timeout_sec: u64,
+    window: Option<&str>,
+) -> Result<Value> {
+    let probe = r"(() => ({ready: !!document.querySelector('[data-aijia-settings-shell]')}))()";
+    let last = wait_until(client, probe, timeout_sec * 1000, window).await?;
+    if last.get("ready").and_then(Value::as_bool) == Some(true) {
+        return Ok(json!({"ok": true}));
+    }
+    Ok(json!({
+        "ok": false,
+        "reason": "timeout",
+        "timeoutSec": timeout_sec,
+    }))
+}
+
+async fn settings_select_panel(
+    client: &mut Client,
+    key: &str,
+    window: Option<&str>,
+) -> Result<Value> {
+    let k_lit = js_string_literal(key);
+    let script = format!(
+        r#"(() => {{
+            const shell = document.querySelector('[data-aijia-settings-shell]');
+            if (!shell) return {{ok: false, reason: 'settings_not_open'}};
+            const btn = shell.querySelector('[data-aijia-settings-panel="' + {k} + '"]');
+            if (!btn) return {{
+                ok: false,
+                reason: 'panel_not_found',
+                requested: {k},
+                available: [...shell.querySelectorAll('[data-aijia-settings-panel]')]
+                    .map(b => b.getAttribute('data-aijia-settings-panel')),
+            }};
+            btn.click();
+            return {{ok: true, key: {k}}};
+        }})()"#,
+        k = k_lit,
+    );
+    eval_json(client, &script, window).await
+}
+
+async fn settings_close(client: &mut Client, window: Option<&str>) -> Result<Value> {
+    let script = r#"(() => {
+        const shell = document.querySelector('[data-aijia-settings-shell]');
+        if (!shell) return {ok: false, reason: 'settings_not_open'};
+        const btn = shell.querySelector('[data-aijia-settings-action="close"]');
+        if (!btn) return {ok: false, reason: 'close_button_not_found'};
+        btn.click();
+        return {ok: true};
+    })()"#;
+    eval_json(client, script, window).await
+}
+
+async fn logout(client: &mut Client, window: Option<&str>) -> Result<Value> {
+    // Pre: settings modal open + General panel active. The button has no
+    // confirm dialog — auth state flips synchronously, settings modal closes
+    // itself via closeSettings(), and AuthGate re-mounts LoginPage. Caller
+    // can chain `where --json` polling on loggedIn===false to confirm.
+    let script = r#"(() => {
+        const btn = document.querySelector('[data-aijia-logout-button]');
+        if (!btn) return {ok: false, reason: 'logout_button_not_found_or_panel_inactive'};
+        if (btn.disabled) return {ok: false, reason: 'logout_button_disabled'};
+        btn.click();
+        return {ok: true};
+    })()"#;
+    eval_json(client, script, window).await
+}
+
+// ─── agenda: atomic editor ops ──────────────────────────────────────────────
+
+async fn agenda_open_new(client: &mut Client, window: Option<&str>) -> Result<Value> {
+    let script = r#"(() => {
+        const btn = document.querySelector('[data-aijia-agenda-new]');
+        if (!btn) return {ok: false, reason: 'agenda_new_button_not_found'};
+        if (btn.disabled) return {ok: false, reason: 'agenda_new_button_disabled'};
+        btn.click();
+        return {ok: true};
+    })()"#;
+    eval_json(client, script, window).await
+}
+
+async fn agenda_wait_editor(
+    client: &mut Client,
+    timeout_sec: u64,
+    want_open: bool,
+    window: Option<&str>,
+) -> Result<Value> {
+    let probe = if want_open {
+        r"(() => ({ready: !!document.querySelector('[data-aijia-agenda-editor]')}))()"
+    } else {
+        r"(() => ({ready: !document.querySelector('[data-aijia-agenda-editor]')}))()"
+    };
+    let last = wait_until(client, probe, timeout_sec * 1000, window).await?;
+    if last.get("ready").and_then(Value::as_bool) == Some(true) {
+        return Ok(json!({"ok": true, "wantOpen": want_open}));
+    }
+    Ok(json!({
+        "ok": false,
+        "reason": "timeout",
+        "wantOpen": want_open,
+        "timeoutSec": timeout_sec,
+    }))
+}
+
+async fn agenda_fill(
+    client: &mut Client,
+    field: &str,
+    value: &str,
+    window: Option<&str>,
+) -> Result<Value> {
+    if !["title", "prompt"].contains(&field) {
+        return Ok(json!({
+            "ok": false,
+            "reason": "invalid_field",
+            "expected": ["title", "prompt"],
+            "got": field,
+        }));
+    }
+    let field_lit = js_string_literal(field);
+    let value_lit = js_string_literal(value);
+    let script = format!(
+        r#"(() => {{
+            const root = document.querySelector('[data-aijia-agenda-editor]');
+            if (!root) return {{ok: false, reason: 'editor_not_open'}};
+            const el = root.querySelector('[data-aijia-agenda-field="' + {f} + '"]');
+            if (!el) return {{ok: false, reason: 'field_missing', field: {f}}};
+            const proto = el.tagName === 'TEXTAREA'
+                ? window.HTMLTextAreaElement.prototype
+                : window.HTMLInputElement.prototype;
+            const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+            setter.call(el, {v});
+            el.dispatchEvent(new Event('input', {{bubbles: true}}));
+            return {{ok: true, field: {f}, value: el.value}};
+        }})()"#,
+        f = field_lit,
+        v = value_lit,
+    );
+    eval_json(client, &script, window).await
+}
+
+/// Map CLI-friendly frequency aliases (`once`, `weekly`, ...) to the editor's
+/// internal value (`one_shot`, `weekly`, ...). The editor's `<select>` uses
+/// the on-disk `Freq` enum plus a `one_shot` sentinel for null rule.
+fn map_frequency(cli: &str) -> Option<&'static str> {
+    match cli {
+        "once" | "one_shot" | "one-shot" => Some("one_shot"),
+        "daily" => Some("daily"),
+        "weekly" => Some("weekly"),
+        "monthly" => Some("monthly"),
+        "yearly" => Some("yearly"),
+        _ => None,
+    }
+}
+
+async fn agenda_set_frequency(
+    client: &mut Client,
+    value: &str,
+    window: Option<&str>,
+) -> Result<Value> {
+    let mapped = match map_frequency(value) {
+        Some(v) => v,
+        None => {
+            return Ok(json!({
+                "ok": false,
+                "reason": "invalid_frequency",
+                "expected": ["once", "daily", "weekly", "monthly", "yearly"],
+                "got": value,
+            }));
+        }
+    };
+    let v_lit = js_string_literal(mapped);
+    let script = format!(
+        r#"(() => {{
+            const root = document.querySelector('[data-aijia-agenda-editor]');
+            if (!root) return {{ok: false, reason: 'editor_not_open'}};
+            const sel = root.querySelector('select[aria-label="频率"]');
+            if (!sel) return {{ok: false, reason: 'frequency_select_missing'}};
+            const want = {v};
+            const opt = [...sel.options].find(o => o.value === want);
+            if (!opt) return {{ok: false, reason: 'frequency_option_missing', got: want}};
+            const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+            setter.call(sel, opt.value);
+            sel.dispatchEvent(new Event('change', {{bubbles: true}}));
+            return {{ok: true, value: sel.value}};
+        }})()"#,
+        v = v_lit,
+    );
+    eval_json(client, &script, window).await
+}
+
+async fn agenda_set_start_at(
+    client: &mut Client,
+    value: &str,
+    window: Option<&str>,
+) -> Result<Value> {
+    let v_lit = js_string_literal(value);
+    let script = format!(
+        r#"(() => {{
+            const root = document.querySelector('[data-aijia-agenda-editor]');
+            if (!root) return {{ok: false, reason: 'editor_not_open'}};
+            const el = root.querySelector('#agenda-editor-start');
+            if (!el) return {{ok: false, reason: 'start_input_missing'}};
+            const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+            setter.call(el, {v});
+            el.dispatchEvent(new Event('input', {{bubbles: true}}));
+            return {{ok: true, value: el.value}};
+        }})()"#,
+        v = v_lit,
+    );
+    eval_json(client, &script, window).await
+}
+
+async fn agenda_set_employee(
+    client: &mut Client,
+    name: &str,
+    window: Option<&str>,
+) -> Result<Value> {
+    let n_lit = js_string_literal(name);
+    let script = format!(
+        r#"(() => {{
+            const root = document.querySelector('[data-aijia-agenda-editor]');
+            if (!root) return {{ok: false, reason: 'editor_not_open'}};
+            const sel = root.querySelector('select[aria-label="执行员工"]');
+            if (!sel) return {{ok: false, reason: 'employee_select_missing_or_no_employees'}};
+            if (sel.disabled) return {{ok: false, reason: 'employee_select_disabled', hint: 'editing_existing_agenda'}};
+            const want = {n};
+            const opt = [...sel.options].find(o => (o.textContent || '').includes(want));
+            if (!opt) return {{
+                ok: false,
+                reason: 'employee_not_found',
+                requested: want,
+                options: [...sel.options].map(o => o.textContent),
+            }};
+            const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+            setter.call(sel, opt.value);
+            sel.dispatchEvent(new Event('change', {{bubbles: true}}));
+            return {{ok: true, employeeId: opt.value, optionText: opt.textContent}};
+        }})()"#,
+        n = n_lit,
+    );
+    eval_json(client, &script, window).await
+}
+
+/// Click "保存" or "取消" inside the agenda editor. Atomic — does NOT wait
+/// for the editor to close (chain `agenda-wait-editor-closed`).
+async fn agenda_editor_action(
+    client: &mut Client,
+    action: &str,
+    window: Option<&str>,
+) -> Result<Value> {
+    let action_lit = js_string_literal(action);
+    let script = format!(
+        r#"(() => {{
+            const root = document.querySelector('[data-aijia-agenda-editor]');
+            if (!root) return {{ok: false, reason: 'editor_not_open'}};
+            const btn = root.querySelector('[data-aijia-agenda-action="' + {a} + '"]');
+            if (!btn) return {{ok: false, reason: 'action_button_missing', action: {a}}};
+            if (btn.disabled) return {{ok: false, reason: 'action_button_disabled', action: {a}}};
+            btn.click();
+            return {{ok: true, action: {a}}};
+        }})()"#,
+        a = action_lit,
+    );
+    eval_json(client, &script, window).await
+}
+
+async fn agenda_wait_row(
+    client: &mut Client,
+    title: &str,
+    timeout_sec: u64,
+    window: Option<&str>,
+) -> Result<Value> {
+    let t_lit = js_string_literal(title);
+    let probe = format!(
+        r#"(() => {{
+            const want = {t};
+            const row = [...document.querySelectorAll('[data-aijia-agenda-row]')]
+                .find(r => r.getAttribute('data-aijia-agenda-title') === want);
+            if (!row) return {{ready: false}};
+            return {{
+                ready: true,
+                agendaId: row.getAttribute('data-aijia-agenda-id'),
+                status: row.getAttribute('data-aijia-agenda-status'),
+            }};
+        }})()"#,
+        t = t_lit,
+    );
+    let last = wait_until(client, &probe, timeout_sec * 1000, window).await?;
+    if last.get("ready").and_then(Value::as_bool) == Some(true) {
+        return Ok(json!({
+            "ok": true,
+            "title": title,
+            "agendaId": last.get("agendaId").cloned().unwrap_or(Value::Null),
+            "status": last.get("status").cloned().unwrap_or(Value::Null),
+        }));
+    }
+    Ok(json!({
+        "ok": false,
+        "reason": "timeout",
+        "timeoutSec": timeout_sec,
+    }))
+}
+
+/// Click a single action button on the row matching `title`. Each row has
+/// hover-revealed buttons with `aria-label="<verb> <title>"`. `cancel` opens
+/// a ConfirmDialog — caller chains `handle-dialog --action accept`; this
+/// command does NOT auto-confirm.
+async fn agenda_row_action(
+    client: &mut Client,
+    title: &str,
+    action: &str,
+    window: Option<&str>,
+) -> Result<Value> {
+    let aria_prefix = match action {
+        "run-now" | "run_now" => "立即运行 ",
+        "pause" => "暂停 ",
+        "resume" => "启用 ",
+        "edit" => "编辑 ",
+        "cancel" => "取消 ",
+        "restore" => "恢复 ",
+        "purge" => "永久删除 ",
+        _ => {
+            return Ok(json!({
+                "ok": false,
+                "reason": "invalid_action",
+                "expected": ["run-now", "pause", "resume", "edit", "cancel", "restore", "purge"],
+                "got": action,
+            }));
+        }
+    };
+    let t_lit = js_string_literal(title);
+    let aria_lit = js_string_literal(aria_prefix);
+    let script = format!(
+        r#"(() => {{
+            const want = {t};
+            const row = [...document.querySelectorAll('[data-aijia-agenda-row]')]
+                .find(r => r.getAttribute('data-aijia-agenda-title') === want);
+            if (!row) return {{ok: false, reason: 'row_not_found', title: want}};
+            const btn = [...row.querySelectorAll('button')]
+                .find(b => (b.getAttribute('aria-label') || '').startsWith({a}));
+            if (!btn) return {{ok: false, reason: 'action_button_not_found', action: {a}}};
+            if (btn.disabled) return {{ok: false, reason: 'action_button_disabled', action: {a}}};
+            btn.click();
+            return {{ok: true, action: {a}, agendaId: row.getAttribute('data-aijia-agenda-id')}};
+        }})()"#,
+        t = t_lit,
+        a = aria_lit,
+    );
+    eval_json(client, &script, window).await
+}
+
+// ─── employee: atomic drawer ops ────────────────────────────────────────────
+
+async fn employee_open_card(
+    client: &mut Client,
+    name: Option<&str>,
+    id: Option<&str>,
+    window: Option<&str>,
+) -> Result<Value> {
+    if name.is_none() && id.is_none() {
+        return Ok(json!({
+            "ok": false,
+            "reason": "missing_argument",
+            "hint": "pass exactly one of --name or --id",
+        }));
+    }
+    let (selector_field, want_lit) = match (name, id) {
+        (Some(n), None) => ("data-aijia-employee-name", js_string_literal(n)),
+        (None, Some(i)) => ("data-aijia-employee-id", js_string_literal(i)),
+        _ => unreachable!("clap conflicts_with prevents both"),
+    };
+    let script = format!(
+        r#"(() => {{
+            const field = {field};
+            const want = {want};
+            const card = [...document.querySelectorAll('[data-aijia-employee-card]')]
+                .find(c => c.getAttribute(field) === want);
+            if (!card) return {{
+                ok: false,
+                reason: 'employee_card_not_found',
+                requested: want,
+                searchedField: field,
+                cards: [...document.querySelectorAll('[data-aijia-employee-card]')]
+                    .map(c => ({{
+                        id: c.getAttribute('data-aijia-employee-id'),
+                        name: c.getAttribute('data-aijia-employee-name'),
+                    }})),
+            }};
+            card.click();
+            return {{
+                ok: true,
+                employeeId: card.getAttribute('data-aijia-employee-id'),
+                name: card.getAttribute('data-aijia-employee-name'),
+            }};
+        }})()"#,
+        field = js_string_literal(selector_field),
+        want = want_lit,
+    );
+    eval_json(client, &script, window).await
+}
+
+async fn employee_wait_drawer(
+    client: &mut Client,
+    timeout_sec: u64,
+    window: Option<&str>,
+) -> Result<Value> {
+    let probe = r"(() => ({ready: !!document.querySelector('[data-aijia-employee-drawer]')}))()";
+    let last = wait_until(client, probe, timeout_sec * 1000, window).await?;
+    if last.get("ready").and_then(Value::as_bool) == Some(true) {
+        return Ok(json!({"ok": true}));
+    }
+    Ok(json!({
+        "ok": false,
+        "reason": "timeout",
+        "timeoutSec": timeout_sec,
+    }))
+}
+
+async fn employee_click_dispatch(
+    client: &mut Client,
+    window: Option<&str>,
+) -> Result<Value> {
+    let script = r#"(() => {
+        const dr = document.querySelector('[data-aijia-employee-drawer]');
+        if (!dr) return {ok: false, reason: 'drawer_not_open'};
+        const btn = dr.querySelector('[data-aijia-employee-action="dispatch"]');
+        if (!btn) return {ok: false, reason: 'dispatch_button_not_found'};
+        if (btn.disabled) return {ok: false, reason: 'dispatch_button_disabled', text: (btn.textContent || '').trim()};
+        btn.click();
+        return {ok: true};
+    })()"#;
+    eval_json(client, script, window).await
+}
+
+async fn employee_close_drawer(
+    client: &mut Client,
+    window: Option<&str>,
+) -> Result<Value> {
+    let script = r#"(() => {
+        const dr = document.querySelector('[data-aijia-employee-drawer]');
+        if (!dr) return {ok: false, reason: 'drawer_not_open'};
+        const btn = dr.querySelector('[data-aijia-employee-action="close"]');
+        if (!btn) return {ok: false, reason: 'close_button_not_found'};
+        btn.click();
+        return {ok: true};
+    })()"#;
+    eval_json(client, script, window).await
+}
+
+/// Generic poll-until helper used across agenda flows. probe_script must
+/// return `{ready: bool, ...}`; returns the last probe payload.
+async fn wait_until(
+    client: &mut Client,
+    probe_script: &str,
+    timeout_ms: u64,
+    window: Option<&str>,
+) -> Result<Value> {
+    let deadline = Instant::now() + Duration::from_millis(timeout_ms);
+    let mut last = Value::Null;
+    while Instant::now() < deadline {
+        let r = eval_json(client, probe_script, window).await?;
+        last = r.clone();
+        if r.get("ready").and_then(Value::as_bool) == Some(true) {
+            return Ok(r);
+        }
+        tokio::time::sleep(Duration::from_millis(150)).await;
+    }
+    Ok(last)
+}
+
+// ─── navigation: goto ────────────────────────────────────────────────────────
+
+async fn goto(
+    client: &mut Client,
+    page: &str,
+    wait: bool,
+    window: Option<&str>,
+) -> Result<Value> {
+    // Top-level sidebar entries are tagged with `data-aijia-nav={key}`
+    // (see `src/components/sidebar/SidebarNav.tsx`). Stable across i18n
+    // and layout changes — never match by textContent.
+    const VALID: &[&str] = &[
+        "home",
+        "employees",
+        "expert-teams",
+        "skill-center",
+        "schedules",
+        "channel",
+    ];
+    if !VALID.contains(&page) {
+        return Ok(json!({
+            "ok": false,
+            "reason": "invalid_page",
+            "valid": VALID,
+            "got": page,
+        }));
+    }
+    let page_lit = js_string_literal(page);
+    let click_script = format!(
+        r#"(() => {{
+            const btn = document.querySelector('[data-aijia-nav="' + {page} + '"]');
+            if (!btn) return {{ok: false, reason: 'nav_button_not_found', page: {page}}};
+            btn.click();
+            return {{ok: true, page: {page}}};
+        }})()"#,
+        page = page_lit,
+    );
+    let click = eval_json(client, &click_script, window).await?;
+    if click.get("ok").and_then(Value::as_bool) != Some(true) {
+        return Ok(click);
+    }
+    if !wait {
+        return Ok(click);
+    }
+
+    // Poll uiStore.route.kind until it flips to the requested page.
+    // SidebarNav 的 onSelect 是同步 `setRoute({kind})`，正常 < 100ms 完成；
+    // 但 Sheet/Dialog 关闭动画可能短暂阻塞 React commit，所以 5s 兜底。
+    let probe = format!(
+        r#"(() => {{
+            const ui = window.__aijia?.uiStore?.getState?.();
+            const got = ui?.route?.kind ?? null;
+            return {{ready: got === {page}, got: got}};
+        }})()"#,
+        page = page_lit,
+    );
+    let last = wait_until(client, &probe, 5000, window).await?;
+    if last.get("ready").and_then(Value::as_bool) == Some(true) {
+        return Ok(json!({"ok": true, "page": page}));
+    }
+    Ok(json!({
+        "ok": false,
+        "reason": "route_did_not_settle",
+        "page": page,
+        "lastRoute": last.get("got").cloned().unwrap_or(Value::Null),
+    }))
+}
+
+// ─── dialog: handle-dialog ──────────────────────────────────────────────────
+
+async fn handle_dialog(
+    client: &mut Client,
+    action: &str,
+    timeout: u64,
+    window: Option<&str>,
+) -> Result<Value> {
+    // Targets ConfirmDialog (Radix AlertDialog wrapper) which renders
+    // `[data-aijia-confirm-dialog]` with two child buttons:
+    //   `[data-aijia-confirm-action="cancel"]` and `="confirm"`.
+    // For other Radix Dialog instances without those attrs, this falls
+    // back to `[role="alertdialog"]` + button text matching as a best effort.
+    let target = match action {
+        "accept" => "confirm",
+        "dismiss" => "cancel",
+        _ => {
+            return Ok(json!({
+                "ok": false,
+                "reason": "invalid_action",
+                "expected": ["accept", "dismiss"],
+                "got": action,
+            }));
+        }
+    };
+    let target_lit = js_string_literal(target);
+    let probe_script = format!(
+        r#"(() => {{
+            const dlg = document.querySelector('[data-aijia-confirm-dialog]')
+                || document.querySelector('[role="alertdialog"]');
+            if (!dlg) return {{ready: false, reason: 'no_dialog'}};
+            const btn = dlg.querySelector('[data-aijia-confirm-action="' + {target} + '"]');
+            return {{ready: !!btn, hasDialog: true}};
+        }})()"#,
+        target = target_lit,
+    );
+    let click_script = format!(
+        r#"(() => {{
+            const dlg = document.querySelector('[data-aijia-confirm-dialog]')
+                || document.querySelector('[role="alertdialog"]');
+            if (!dlg) return {{ok: false, reason: 'no_dialog'}};
+            const btn = dlg.querySelector('[data-aijia-confirm-action="' + {target} + '"]');
+            if (!btn) return {{ok: false, reason: 'action_button_not_found', action: {target}}};
+            btn.click();
+            return {{ok: true, action: {target}}};
+        }})()"#,
+        target = target_lit,
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(timeout);
+    let mut last = Value::Null;
+    while Instant::now() < deadline {
+        let probe = eval_json(client, &probe_script, window).await?;
+        last = probe.clone();
+        if probe.get("ready").and_then(Value::as_bool) == Some(true) {
+            return eval_json(client, &click_script, window).await;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    Ok(json!({
+        "ok": false,
+        "reason": "timeout",
+        "timeoutSec": timeout,
+        "lastProbe": last,
+    }))
+}
+
+// ─── tool-call introspection ────────────────────────────────────────────────
+
+fn parse_turn_arg(turn: &str) -> Result<Option<usize>> {
+    if turn == "last" {
+        return Ok(None);
+    }
+    let n: usize = turn
+        .parse()
+        .with_context(|| format!("--turn must be `last` or a non-negative integer, got `{turn}`"))?;
+    Ok(Some(n))
+}
+
+async fn tool_calls(client: &mut Client, turn: &str, window: Option<&str>) -> Result<Value> {
+    // Walk chatStore.messages, group by turn. A "turn" starts at a user
+    // message and ends right before the next user message; intermediate
+    // assistant + tool messages belong to it. Returns the tool_calls of
+    // the requested turn.
+    let n = parse_turn_arg(turn)?;
+    let n_lit = match n {
+        None => "null".to_string(),
+        Some(idx) => idx.to_string(),
+    };
+    let script = format!(
+        r#"(() => {{
+            const cs = window.__aijia?.chatStore?.getState?.();
+            if (!cs) return {{ok: false, reason: 'store_missing'}};
+            const msgs = cs.messages || [];
+            const turns = [];
+            let cur = null;
+            for (const m of msgs) {{
+                if (m.role === 'user') {{
+                    if (cur) turns.push(cur);
+                    cur = {{ role: 'user', userText: (m.content?.text || ''), tools: [] }};
+                }} else if (cur) {{
+                    const calls = m.tool_calls || [];
+                    for (const c of calls) cur.tools.push({{
+                        tool_name: c.name ?? c.tool_name ?? null,
+                        args: c.args ?? c.input ?? null,
+                        status: c.status ?? null,
+                        result_summary: typeof c.result === 'string'
+                            ? c.result.slice(0, 200)
+                            : (c.result ? JSON.stringify(c.result).slice(0, 200) : null),
+                    }});
+                }}
+            }}
+            if (cur) turns.push(cur);
+            if (turns.length === 0) return {{ok: false, reason: 'no_turns'}};
+            const idx = ({n} == null) ? (turns.length - 1) : {n};
+            const t = turns[idx];
+            if (!t) return {{ok: false, reason: 'turn_out_of_range', turnCount: turns.length, requested: idx}};
+            return {{ok: true, turn: idx, turnCount: turns.length, userText: t.userText, tools: t.tools}};
+        }})()"#,
+        n = n_lit,
+    );
+    eval_json(client, &script, window).await
+}
+
+async fn tool_bubble(client: &mut Client, turn: &str, window: Option<&str>) -> Result<Value> {
+    // Scrape currently-rendered tool bubbles from the chat DOM, bypassing
+    // ui-message's "drop empty placeholder" filter. Useful when verifying
+    // post-restart UI: the jsonl on disk is correct but ui-message hides
+    // bubbles whose text == "" because tool_calls metadata is reattached
+    // out of band.
+    //
+    // The current chat layout doesn't have a per-turn DOM marker yet, so
+    // `--turn last` is the only meaningful value today. `--turn N` returns
+    // the same payload with a note. Once turn boundaries are tagged in DOM
+    // (e.g. `data-aijia-turn={n}`) this command can split them properly.
+    let n = parse_turn_arg(turn)?;
+    let script = r#"(() => {
+        // Heuristic: look for our streaming + AI bubbles and their child
+        // tool blocks. Falls back to any element with a class containing
+        // 'tool-call' or 'tool-bubble'. Best-effort — author should add
+        // `data-aijia-tool-bubble` when the bubble component is touched.
+        const bubbles = [...document.querySelectorAll(
+            '[data-aijia-tool-bubble], [data-aijia-ai-bubble] [class*="tool"], [data-aijia-streaming-bubble] [class*="tool"]'
+        )];
+        const out = bubbles.map((el) => {
+            const text = (el.textContent || '').trim();
+            const expanded = el.getAttribute('data-aijia-tool-expanded') === 'true'
+                || el.getAttribute('aria-expanded') === 'true';
+            const hasSpinner = !!el.querySelector('[class*="animate-spin"], [data-aijia-spinner]');
+            const errorEl = el.querySelector('[class*="text-destructive"]');
+            const errorText = errorEl ? (errorEl.textContent || '').trim() : null;
+            const linkEl = el.querySelector('a[href]');
+            const firstUrl = linkEl ? linkEl.getAttribute('href') : null;
+            const status = errorText
+                ? 'failed'
+                : (hasSpinner ? 'running' : 'succeeded');
+            // tool name often surfaces as the first short heading or a
+            // bolded span; this is heuristic and may miss bespoke layouts.
+            const headingEl = el.querySelector('strong, [class*="font-medium"], [class*="font-semibold"]');
+            const tool_name = headingEl ? (headingEl.textContent || '').trim() || null : null;
+            return {
+                tool_name,
+                status,
+                expanded,
+                first_url: firstUrl,
+                error_text: errorText,
+                preview: text.slice(0, 200),
+            };
+        });
+        return {ok: true, bubbles: out, count: out.length};
+    })()"#;
+    let mut data = eval_json(client, script, window).await?;
+    if let Some(obj) = data.as_object_mut() {
+        obj.insert(
+            "turn_arg".to_string(),
+            match n {
+                Some(i) => json!(i),
+                None => json!("last"),
+            },
+        );
+        if n.is_some() {
+            obj.insert(
+                "note".to_string(),
+                json!("turn boundaries not yet tagged in DOM — payload covers all currently-rendered bubbles"),
+            );
+        }
+    }
+    Ok(data)
+}
+
+// ─── hire wizard: atomic ops ────────────────────────────────────────────────
+
+async fn hire_open(client: &mut Client, variant: &str, window: Option<&str>) -> Result<Value> {
+    if !["template-market", "add-card"].contains(&variant) {
+        return Ok(json!({
+            "ok": false,
+            "reason": "invalid_variant",
+            "expected": ["template-market", "add-card"],
+            "got": variant,
+        }));
+    }
+    let v_lit = js_string_literal(variant);
+    let script = format!(
+        r#"(() => {{
+            const btn = document.querySelector('[data-aijia-hire-button="' + {v} + '"]');
+            if (!btn) return {{ok: false, reason: 'hire_button_not_found', variant: {v}}};
+            btn.click();
+            return {{ok: true, variant: {v}}};
+        }})()"#,
+        v = v_lit,
+    );
+    eval_json(client, &script, window).await
+}
+
+async fn hire_wait(client: &mut Client, timeout_sec: u64, window: Option<&str>) -> Result<Value> {
+    let probe = r"(() => {
+        const w = document.querySelector('[data-aijia-hire-wizard]');
+        if (!w) return {ready: false};
+        return {ready: true, step: parseInt(w.getAttribute('data-aijia-hire-step') || '1', 10)};
+    })()";
+    let last = wait_until(client, probe, timeout_sec * 1000, window).await?;
+    if last.get("ready").and_then(Value::as_bool) == Some(true) {
+        return Ok(json!({
+            "ok": true,
+            "step": last.get("step").cloned().unwrap_or(Value::Null),
+        }));
+    }
+    Ok(json!({
+        "ok": false,
+        "reason": "timeout",
+        "timeoutSec": timeout_sec,
+    }))
+}
+
+async fn hire_select_template(
+    client: &mut Client,
+    id: Option<&str>,
+    name: Option<&str>,
+    window: Option<&str>,
+) -> Result<Value> {
+    if id.is_none() && name.is_none() {
+        return Ok(json!({
+            "ok": false,
+            "reason": "missing_selector",
+            "hint": "pass --id or --name",
+        }));
+    }
+    let id_lit = match id {
+        Some(s) => js_string_literal(s),
+        None => "null".to_string(),
+    };
+    let name_lit = match name {
+        Some(s) => js_string_literal(s),
+        None => "null".to_string(),
+    };
+    let script = format!(
+        r#"(() => {{
+            const wizard = document.querySelector('[data-aijia-hire-wizard]');
+            if (!wizard) return {{ok: false, reason: 'wizard_not_open'}};
+            const cards = [...wizard.querySelectorAll('[data-aijia-hire-template]')];
+            if (cards.length === 0) return {{ok: false, reason: 'no_templates_rendered'}};
+            const wantId = {id};
+            const wantName = {name};
+            let target = null;
+            if (wantId) {{
+                target = cards.find(c => c.getAttribute('data-aijia-hire-template-id') === wantId);
+            }} else if (wantName) {{
+                target = cards.find(c => (c.getAttribute('data-aijia-hire-template-name') || '').includes(wantName));
+            }}
+            if (!target) return {{
+                ok: false,
+                reason: 'template_not_found',
+                requestedId: wantId,
+                requestedName: wantName,
+                available: cards.map(c => ({{
+                    id: c.getAttribute('data-aijia-hire-template-id'),
+                    name: c.getAttribute('data-aijia-hire-template-name'),
+                }})),
+            }};
+            target.click();
+            return {{
+                ok: true,
+                templateId: target.getAttribute('data-aijia-hire-template-id'),
+                name: target.getAttribute('data-aijia-hire-template-name'),
+            }};
+        }})()"#,
+        id = id_lit,
+        name = name_lit,
+    );
+    eval_json(client, &script, window).await
+}
+
+async fn hire_action(client: &mut Client, action: &str, window: Option<&str>) -> Result<Value> {
+    let a_lit = js_string_literal(action);
+    let script = format!(
+        r#"(() => {{
+            const wizard = document.querySelector('[data-aijia-hire-wizard]');
+            if (!wizard) return {{ok: false, reason: 'wizard_not_open'}};
+            const btn = wizard.querySelector('[data-aijia-hire-action="' + {a} + '"]');
+            if (!btn) return {{ok: false, reason: 'action_button_not_found', action: {a}}};
+            if (btn.disabled) return {{ok: false, reason: 'action_button_disabled', action: {a}}};
+            btn.click();
+            return {{ok: true, action: {a}}};
+        }})()"#,
+        a = a_lit,
+    );
+    eval_json(client, &script, window).await
+}
+
+async fn hire_fill(
+    client: &mut Client,
+    field: &str,
+    value: &str,
+    window: Option<&str>,
+) -> Result<Value> {
+    if !["name", "cron"].contains(&field) {
+        return Ok(json!({
+            "ok": false,
+            "reason": "invalid_field",
+            "expected": ["name", "cron"],
+            "got": field,
+        }));
+    }
+    let f_lit = js_string_literal(field);
+    let v_lit = js_string_literal(value);
+    let script = format!(
+        r#"(() => {{
+            const wizard = document.querySelector('[data-aijia-hire-wizard]');
+            if (!wizard) return {{ok: false, reason: 'wizard_not_open'}};
+            const el = wizard.querySelector('[data-aijia-hire-field="' + {f} + '"]');
+            if (!el) return {{ok: false, reason: 'field_missing', field: {f}}};
+            const proto = el.tagName === 'TEXTAREA'
+                ? window.HTMLTextAreaElement.prototype
+                : window.HTMLInputElement.prototype;
+            const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+            setter.call(el, {v});
+            el.dispatchEvent(new Event('input', {{bubbles: true}}));
+            return {{ok: true, field: {f}, value: el.value}};
+        }})()"#,
+        f = f_lit,
+        v = v_lit,
+    );
+    eval_json(client, &script, window).await
+}
+
+// ─── employee: extended ops ─────────────────────────────────────────────────
+
+async fn employee_status(
+    client: &mut Client,
+    name: Option<&str>,
+    id: Option<&str>,
+    window: Option<&str>,
+) -> Result<Value> {
+    if name.is_none() && id.is_none() {
+        return Ok(json!({
+            "ok": false,
+            "reason": "missing_argument",
+            "hint": "pass exactly one of --name or --id",
+        }));
+    }
+    let (selector_field, want_lit) = match (name, id) {
+        (Some(n), None) => ("data-aijia-employee-name", js_string_literal(n)),
+        (None, Some(i)) => ("data-aijia-employee-id", js_string_literal(i)),
+        _ => unreachable!("clap conflicts_with prevents both"),
+    };
+    let script = format!(
+        r#"(() => {{
+            const field = {field};
+            const want = {want};
+            const card = [...document.querySelectorAll('[data-aijia-employee-card]')]
+                .find(c => c.getAttribute(field) === want);
+            if (!card) return {{
+                ok: false,
+                reason: 'employee_card_not_found',
+                requested: want,
+                searchedField: field,
+                cards: [...document.querySelectorAll('[data-aijia-employee-card]')]
+                    .map(c => ({{
+                        id: c.getAttribute('data-aijia-employee-id'),
+                        name: c.getAttribute('data-aijia-employee-name'),
+                    }})),
+            }};
+            return {{
+                ok: true,
+                employeeId: card.getAttribute('data-aijia-employee-id'),
+                name: card.getAttribute('data-aijia-employee-name'),
+                status: card.getAttribute('data-aijia-employee-status'),
+                cronEnabled: card.getAttribute('data-aijia-employee-cron-enabled'),
+                dispatchDisabled: card.getAttribute('data-aijia-employee-dispatch-disabled') === 'true',
+            }};
+        }})()"#,
+        field = js_string_literal(selector_field),
+        want = want_lit,
+    );
+    eval_json(client, &script, window).await
+}
+
+async fn employee_drawer_action(
+    client: &mut Client,
+    action: &str,
+    window: Option<&str>,
+) -> Result<Value> {
+    const VALID: &[&str] = &[
+        "dispatch",
+        "close",
+        "view-chat",
+        "stop",
+        "edit-cron",
+        "toggle-cron",
+        "toggle-cron-badge",
+        "add-cron-trigger",
+        "config-resource",
+        "fire",
+    ];
+    if !VALID.contains(&action) {
+        return Ok(json!({
+            "ok": false,
+            "reason": "invalid_action",
+            "expected": VALID,
+            "got": action,
+        }));
+    }
+    let a_lit = js_string_literal(action);
+    let script = format!(
+        r#"(() => {{
+            const dr = document.querySelector('[data-aijia-employee-drawer]');
+            if (!dr) return {{ok: false, reason: 'drawer_not_open'}};
+            const btn = dr.querySelector('[data-aijia-employee-action="' + {a} + '"]');
+            if (!btn) return {{ok: false, reason: 'action_button_not_found', action: {a}}};
+            if (btn.disabled) return {{ok: false, reason: 'action_button_disabled', action: {a}}};
+            btn.click();
+            return {{ok: true, action: {a}}};
+        }})()"#,
+        a = a_lit,
+    );
+    eval_json(client, &script, window).await
+}
+
+async fn employee_card_toggle_cron(
+    client: &mut Client,
+    name: &str,
+    window: Option<&str>,
+) -> Result<Value> {
+    let n_lit = js_string_literal(name);
+    let script = format!(
+        r#"(() => {{
+            const want = {n};
+            const card = [...document.querySelectorAll('[data-aijia-employee-card]')]
+                .find(c => c.getAttribute('data-aijia-employee-name') === want);
+            if (!card) return {{ok: false, reason: 'employee_card_not_found', requested: want}};
+            const btn = card.querySelector('[data-aijia-employee-action="pause-cron"], [data-aijia-employee-action="resume-cron"]');
+            if (!btn) return {{ok: false, reason: 'cron_toggle_missing', hint: 'employee may not have cron configured'}};
+            const which = btn.getAttribute('data-aijia-employee-action');
+            btn.click();
+            return {{ok: true, clicked: which}};
+        }})()"#,
+        n = n_lit,
+    );
+    eval_json(client, &script, window).await
+}
+
+// ─── resource config form: atomic ops ────────────────────────────────────────
+
+async fn resource_fill(
+    client: &mut Client,
+    field: &str,
+    value: &str,
+    row: Option<usize>,
+    window: Option<&str>,
+) -> Result<Value> {
+    let f_lit = js_string_literal(field);
+    let v_lit = js_string_literal(value);
+    let row_lit = match row {
+        Some(n) => n.to_string(),
+        None => "null".to_string(),
+    };
+    let script = format!(
+        r#"(() => {{
+            const form = document.querySelector('[data-aijia-resource-form]');
+            if (!form) return {{ok: false, reason: 'resource_form_not_open'}};
+            const wantField = {f};
+            const wantRow = {r};
+            let scope = form;
+            if (wantRow !== null) {{
+                const rowEl = form.querySelector('[data-aijia-resource-row="' + wantRow + '"]');
+                if (!rowEl) return {{
+                    ok: false,
+                    reason: 'row_not_found',
+                    requestedRow: wantRow,
+                    rowCount: form.querySelectorAll('[data-aijia-resource-row]').length,
+                }};
+                scope = rowEl;
+            }}
+            let el = scope.querySelector('[data-aijia-resource-field="' + wantField + '"]');
+            // SchemaForm wraps its inputs in a div with the attribute; descend to the actual input.
+            if (el && !('value' in el)) {{
+                el = el.querySelector('input, textarea, select') || el;
+            }}
+            if (!el || !('value' in el)) {{
+                return {{ok: false, reason: 'field_missing', field: wantField}};
+            }}
+            const tag = el.tagName;
+            const proto = tag === 'TEXTAREA'
+                ? window.HTMLTextAreaElement.prototype
+                : tag === 'SELECT'
+                    ? window.HTMLSelectElement.prototype
+                    : window.HTMLInputElement.prototype;
+            const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+            setter.call(el, {v});
+            el.dispatchEvent(new Event(tag === 'SELECT' ? 'change' : 'input', {{bubbles: true}}));
+            return {{ok: true, field: wantField, value: el.value, row: wantRow}};
+        }})()"#,
+        f = f_lit,
+        v = v_lit,
+        r = row_lit,
+    );
+    eval_json(client, &script, window).await
+}
+
+async fn resource_action(
+    client: &mut Client,
+    action: &str,
+    row: Option<usize>,
+    window: Option<&str>,
+) -> Result<Value> {
+    let a_lit = js_string_literal(action);
+    let row_lit = match row {
+        Some(n) => n.to_string(),
+        None => "null".to_string(),
+    };
+    let script = format!(
+        r#"(() => {{
+            const form = document.querySelector('[data-aijia-resource-form]');
+            if (!form) return {{ok: false, reason: 'resource_form_not_open'}};
+            const wantAction = {a};
+            const wantRow = {r};
+            let scope = form;
+            if (wantRow !== null) {{
+                const rowEl = form.querySelector('[data-aijia-resource-row="' + wantRow + '"]');
+                if (!rowEl) return {{ok: false, reason: 'row_not_found', requestedRow: wantRow}};
+                scope = rowEl;
+            }}
+            const btn = scope.querySelector('[data-aijia-resource-action="' + wantAction + '"]');
+            if (!btn) return {{ok: false, reason: 'action_button_not_found', action: wantAction}};
+            if (btn.disabled) return {{ok: false, reason: 'action_button_disabled', action: wantAction}};
+            btn.click();
+            return {{ok: true, action: wantAction, row: wantRow}};
+        }})()"#,
+        a = a_lit,
+        r = row_lit,
+    );
+    eval_json(client, &script, window).await
+}
+
+// ─── workspace picker (home composer) ────────────────────────────────────────
+//
+// 产品契约：用户只在「新建对话」流程里挑一次 workspace。HomeTaskComposerCard
+// 底部 dropdown 三种来源（recent / default / other）。这里不暴露切换 / 撤销 /
+// 列表——产品没有这些 UI（已确认 `revokeAuthorizedWorkspace` 无 caller，
+// ChatTopBar 只读展示）。`other` 走 OS folder dialog，dev 下由
+// `workspace-queue-path` 入队 mock 跳过 dialog。
+
+async fn workspace_queue_path(
+    client: &mut Client,
+    path: &str,
+    window: Option<&str>,
+) -> Result<Value> {
+    let path_lit = js_string_literal(path);
+    let script = format!(
+        r#"(() => {{
+            const aj = window.__aijia;
+            if (!aj) return {{ok: false, reason: 'dev_hooks_unavailable'}};
+            if (!Array.isArray(aj._pickDirectoryMockQueue)) {{
+                aj._pickDirectoryMockQueue = [];
+            }}
+            aj._pickDirectoryMockQueue.push({p});
+            return {{
+                ok: true,
+                queued: {p},
+                queueDepth: aj._pickDirectoryMockQueue.length,
+            }};
+        }})()"#,
+        p = path_lit,
+    );
+    eval_json(client, &script, window).await
+}
+
+async fn workspace_open_picker(client: &mut Client, window: Option<&str>) -> Result<Value> {
+    let script = r#"(() => {
+        const btn = document.querySelector('[data-aijia-workspace-trigger]');
+        if (!btn) return {ok: false, reason: 'workspace_trigger_not_found'};
+        if (btn.disabled) return {ok: false, reason: 'workspace_trigger_disabled'};
+        btn.click();
+        return {ok: true};
+    })()"#;
+    eval_json(client, script, window).await
+}
+
+async fn workspace_pick(
+    client: &mut Client,
+    variant: &str,
+    path: Option<&str>,
+    window: Option<&str>,
+) -> Result<Value> {
+    match variant {
+        "default" | "other" => {
+            let action = if variant == "default" { "pick-default" } else { "pick-other" };
+            let a_lit = js_string_literal(action);
+            // Radix DropdownMenuContent renders in a portal — selector lookup
+            // is global. 不限定到具体 menu container 因为打开后只可能存在一个。
+            let script = format!(
+                r#"(() => {{
+                    const item = document.querySelector('[data-aijia-workspace-action="' + {a} + '"]');
+                    if (!item) return {{ok: false, reason: 'item_not_found', action: {a}, hint: 'workspace dropdown 未打开?'}};
+                    item.click();
+                    return {{ok: true, action: {a}}};
+                }})()"#,
+                a = a_lit,
+            );
+            eval_json(client, &script, window).await
+        }
+        "recent" => {
+            let p = match path {
+                Some(s) => s,
+                None => {
+                    return Ok(json!({
+                        "ok": false,
+                        "reason": "missing_path",
+                        "hint": "--variant recent 必须配合 --path <absolute path>",
+                    }));
+                }
+            };
+            let p_lit = js_string_literal(p);
+            let script = format!(
+                r#"(() => {{
+                    const want = {p};
+                    const items = [...document.querySelectorAll('[data-aijia-workspace-recent]')];
+                    const item = items.find(el => el.getAttribute('data-aijia-workspace-path') === want);
+                    if (!item) return {{
+                        ok: false,
+                        reason: 'recent_path_not_found',
+                        requested: want,
+                        available: items.map(el => el.getAttribute('data-aijia-workspace-path')),
+                    }};
+                    item.click();
+                    return {{ok: true, path: want}};
+                }})()"#,
+                p = p_lit,
+            );
+            eval_json(client, &script, window).await
+        }
+        _ => Ok(json!({
+            "ok": false,
+            "reason": "invalid_variant",
+            "expected": ["default", "other", "recent"],
+            "got": variant,
+        })),
+    }
+}
+
+// ─── expert teams: start by click ────────────────────────────────────────────
+//
+// 产品契约：专家团是静态启动器，没有 CRUD。点 card 直接 createConversation +
+// setExpertTeam (localStorage) + 跳 chat 页。"派活" = "点 card" 一个原子。
+
+async fn expert_team_start(
+    client: &mut Client,
+    name: &str,
+    window: Option<&str>,
+) -> Result<Value> {
+    let n_lit = js_string_literal(name);
+    let script = format!(
+        r#"(() => {{
+            const want = {n};
+            const cards = [...document.querySelectorAll('[data-aijia-expert-team-card]')];
+            const card = cards.find(c => c.getAttribute('data-aijia-expert-team-name') === want);
+            if (!card) return {{
+                ok: false,
+                reason: 'expert_team_card_not_found',
+                requested: want,
+                available: cards.map(c => ({{
+                    id: c.getAttribute('data-aijia-expert-team-id'),
+                    name: c.getAttribute('data-aijia-expert-team-name'),
+                }})),
+            }};
+            card.click();
+            return {{
+                ok: true,
+                teamId: card.getAttribute('data-aijia-expert-team-id'),
+                name: want,
+            }};
+        }})()"#,
+        n = n_lit,
+    );
+    eval_json(client, &script, window).await
+}
+
+// ─── skill-center: import flow + cards ──────────────────────────────────────
+
+async fn skill_import_queue(
+    client: &mut Client,
+    path: &str,
+    window: Option<&str>,
+) -> Result<Value> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Ok(json!({
+            "ok": false,
+            "reason": "empty_path",
+            "hint": "pass --path as a single absolute path (folder or .zip)",
+        }));
+    }
+    let p_lit = js_string_literal(trimmed);
+    let script = format!(
+        r#"(() => {{
+            const aj = window.__aijia;
+            if (!aj) return {{ok: false, reason: 'dev_hooks_unavailable'}};
+            if (!Array.isArray(aj._pickSkillImportMockQueue)) {{
+                aj._pickSkillImportMockQueue = [];
+            }}
+            aj._pickSkillImportMockQueue.push({p});
+            return {{
+                ok: true,
+                queueDepth: aj._pickSkillImportMockQueue.length,
+                queued: {p},
+            }};
+        }})()"#,
+        p = p_lit,
+    );
+    eval_json(client, &script, window).await
+}
+
+async fn skill_import_open(client: &mut Client, window: Option<&str>) -> Result<Value> {
+    let script = r#"(() => {
+        const btn = document.querySelector('[data-aijia-skill-import-trigger]');
+        if (!btn) return {ok: false, reason: 'skill_import_trigger_not_found'};
+        if (btn.disabled) return {ok: false, reason: 'skill_import_trigger_disabled'};
+        btn.click();
+        return {ok: true};
+    })()"#;
+    eval_json(client, script, window).await
+}
+
+async fn skill_import_pick(
+    client: &mut Client,
+    variant: &str,
+    window: Option<&str>,
+) -> Result<Value> {
+    let v = variant.trim();
+    if v != "directory" && v != "archive" {
+        return Ok(json!({
+            "ok": false,
+            "reason": "invalid_variant",
+            "hint": "--variant must be one of: directory, archive",
+            "received": variant,
+        }));
+    }
+    let v_lit = js_string_literal(v);
+    let script = format!(
+        r#"(() => {{
+            const want = {v};
+            const item = document.querySelector(`[data-aijia-skill-import-action="${{want}}"]`);
+            if (!item) return {{
+                ok: false,
+                reason: 'skill_import_action_item_not_found',
+                requested: want,
+                hint: 'caller must `skill-import-open` first to mount the dropdown menu',
+                available: [...document.querySelectorAll('[data-aijia-skill-import-action]')]
+                    .map(el => el.getAttribute('data-aijia-skill-import-action')),
+            }};
+            item.click();
+            return {{ok: true, variant: want}};
+        }})()"#,
+        v = v_lit,
+    );
+    eval_json(client, &script, window).await
+}
+
+async fn skill_cards(client: &mut Client, window: Option<&str>) -> Result<Value> {
+    let script = r#"(() => {
+        const cards = [...document.querySelectorAll('[data-aijia-skill-card]')];
+        return {
+            ok: true,
+            count: cards.length,
+            cards: cards.map(c => ({
+                id: c.getAttribute('data-aijia-skill-id') || null,
+                source: c.getAttribute('data-aijia-skill-source') || null,
+            })),
+        };
+    })()"#;
+    eval_json(client, script, window).await
+}
 
 #[cfg(test)]
 mod tests {
