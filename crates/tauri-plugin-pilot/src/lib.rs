@@ -24,7 +24,7 @@ use std::sync::Arc;
 #[cfg(any(unix, windows))]
 use tauri::Manager;
 
-#[cfg(all(any(unix, windows), debug_assertions))]
+#[cfg(any(unix, windows))]
 const BRIDGE_JS: &str = concat!(
     include_str!("../js/vendor/html-to-image.iife.js"),
     "\n",
@@ -40,12 +40,12 @@ const BRIDGE_JS: &str = concat!(
 /// `\\.\pipe\tauri-pilot-{identifier}` and registers the instance under `%LOCALAPPDATA%\tauri-pilot\instances\`.
 #[must_use]
 pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
-    #[cfg(not(all(any(unix, windows), debug_assertions)))]
+    #[cfg(not(any(unix, windows)))]
     {
         return tauri::plugin::Builder::new("pilot").build();
     }
 
-    #[cfg(all(any(unix, windows), debug_assertions))]
+    #[cfg(any(unix, windows))]
     {
         tauri::plugin::Builder::new("pilot")
             .js_init_script(BRIDGE_JS.to_owned())
@@ -86,7 +86,7 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
 
 /// Strip path separators and unsafe characters from the app identifier
 /// so it can be safely used in a socket filename.
-#[cfg(all(any(unix, windows), debug_assertions))]
+#[cfg(any(unix, windows))]
 fn sanitize_identifier(raw: &str) -> String {
     let sanitized: String = raw
         .chars()
@@ -109,7 +109,7 @@ fn sanitize_identifier(raw: &str) -> String {
 ///
 /// If `window` is `Some(label)`, targets that specific window (error if not found).
 /// If `window` is `None`, tries "main" first then falls back to the first available window.
-#[cfg(all(any(unix, windows), debug_assertions))]
+#[cfg(any(unix, windows))]
 fn make_eval_fn<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> EvalFn {
     let handle = app.clone();
     Arc::new(move |window: Option<&str>, script: String| {
@@ -137,7 +137,7 @@ fn make_eval_fn<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> EvalFn {
 /// the first window. The call is best-effort — failures are returned to the
 /// caller (which logs and continues), since the press still has a chance of
 /// landing on whatever window currently holds focus.
-#[cfg(all(any(unix, windows), debug_assertions))]
+#[cfg(any(unix, windows))]
 fn make_focus_fn<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> FocusFn {
     let handle = app.clone();
     Arc::new(move |window: Option<&str>| {
@@ -160,7 +160,7 @@ fn make_focus_fn<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> FocusFn {
 }
 
 /// Create a list function that enumerates all available webview windows.
-#[cfg(all(any(unix, windows), debug_assertions))]
+#[cfg(any(unix, windows))]
 fn make_list_fn<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> ListWindowsFn {
     let handle = app.clone();
     Arc::new(move || {
@@ -182,7 +182,7 @@ fn make_list_fn<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> ListWindowsFn {
 
 #[cfg(test)]
 mod tests {
-    #[cfg(all(any(unix, windows), debug_assertions))]
+    #[cfg(any(unix, windows))]
     #[test]
     fn bridge_js_contains_html_to_image_and_pilot() {
         let js = super::BRIDGE_JS;
@@ -204,7 +204,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(any(unix, windows), debug_assertions))]
+    #[cfg(any(unix, windows))]
     #[test]
     fn bridge_click_dispatches_pointer_sequence() {
         let js = super::BRIDGE_JS;
@@ -250,7 +250,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(any(unix, windows), debug_assertions))]
+    #[cfg(any(unix, windows))]
     #[test]
     fn bridge_scroll_handles_top_and_bottom_directions() {
         let js = super::BRIDGE_JS;
@@ -300,7 +300,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(any(unix, windows), debug_assertions))]
+    #[cfg(any(unix, windows))]
     #[test]
     fn bridge_eval_auto_wraps_top_level_await() {
         // #79: top-level `await` in user scripts must compile via the
@@ -366,7 +366,7 @@ mod tests {
         );
     }
 
-    #[cfg(all(any(unix, windows), debug_assertions))]
+    #[cfg(any(unix, windows))]
     #[test]
     fn bridge_native_value_setter_picks_prototype_per_element() {
         // #85: `fill` and `type` on a <textarea> threw
