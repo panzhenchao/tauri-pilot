@@ -424,7 +424,7 @@ pub(crate) enum AijiaCommand {
     },
     /// Click an action button on a single agenda row identified by `--title`.
     /// `--action` ∈ `run-now` | `pause` | `resume` | `edit` | `cancel` | `restore` | `purge`.
-    /// `cancel` opens a ConfirmDialog — chain `handle-dialog --action accept`
+    /// `cancel` / `purge` open a ConfirmDialog — chain `dialog-click --action confirm`
     /// to confirm; this command does NOT auto-confirm.
     AgendaRowAction {
         #[arg(long)]
@@ -565,7 +565,7 @@ pub(crate) enum AijiaCommand {
     /// the open employee drawer. `--action` ∈ `dispatch` | `close` |
     /// `view-chat` | `stop` | `edit-cron` | `toggle-cron` | `toggle-cron-badge` |
     /// `add-cron-trigger` | `config-resource` | `fire`.
-    /// `fire` opens a Radix ConfirmDialog — chain `handle-dialog --action accept`.
+    /// `fire` opens a Radix ConfirmDialog — chain `dialog-click --action confirm`.
     EmployeeDrawerAction {
         #[arg(long)]
         action: String,

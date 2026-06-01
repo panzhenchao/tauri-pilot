@@ -1483,7 +1483,7 @@ async fn agenda_wait_row(
 
 /// Click a single action button on the row matching `title`. Each row has
 /// hover-revealed buttons with `aria-label="<verb> <title>"`. `cancel` opens
-/// a ConfirmDialog — caller chains `handle-dialog --action accept`; this
+/// a ConfirmDialog — caller chains `dialog-click --action confirm`; this
 /// command does NOT auto-confirm.
 async fn agenda_row_action(
     client: &mut Client,
