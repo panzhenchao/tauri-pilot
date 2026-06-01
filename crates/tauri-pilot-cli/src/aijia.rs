@@ -69,9 +69,6 @@ pub(crate) async fn dispatch(
             cleanup_test_sessions(client, &prefix, window).await
         }
         AijiaCommand::Goto { page, wait } => goto(client, &page, wait, window).await,
-        AijiaCommand::HandleDialog { action, timeout } => {
-            handle_dialog(client, &action, timeout, window).await
-        }
         AijiaCommand::ToolCalls { turn } => tool_calls(client, &turn, window).await,
         AijiaCommand::ToolBubble { turn } => tool_bubble(client, &turn, window).await,
         AijiaCommand::AgendaOpenNew => agenda_open_new(client, window).await,
@@ -1654,73 +1651,6 @@ async fn goto(
         "reason": "route_did_not_settle",
         "page": page,
         "lastRoute": last.get("got").cloned().unwrap_or(Value::Null),
-    }))
-}
-
-// ─── dialog: handle-dialog ──────────────────────────────────────────────────
-
-async fn handle_dialog(
-    client: &mut Client,
-    action: &str,
-    timeout: u64,
-    window: Option<&str>,
-) -> Result<Value> {
-    // Targets ConfirmDialog (Radix AlertDialog wrapper) which renders
-    // `[data-aijia-confirm-dialog]` with two child buttons:
-    //   `[data-aijia-confirm-action="cancel"]` and `="confirm"`.
-    // For other Radix Dialog instances without those attrs, this falls
-    // back to `[role="alertdialog"]` + button text matching as a best effort.
-    let target = match action {
-        "accept" => "confirm",
-        "dismiss" => "cancel",
-        _ => {
-            return Ok(json!({
-                "ok": false,
-                "reason": "invalid_action",
-                "expected": ["accept", "dismiss"],
-                "got": action,
-            }));
-        }
-    };
-    let target_lit = js_string_literal(target);
-    let probe_script = format!(
-        r#"(() => {{
-            const dlg = document.querySelector('[data-aijia-confirm-dialog]')
-                || document.querySelector('[role="alertdialog"]');
-            if (!dlg) return {{ready: false, reason: 'no_dialog'}};
-            const btn = dlg.querySelector('[data-aijia-confirm-action="' + {target} + '"]');
-            return {{ready: !!btn, hasDialog: true}};
-        }})()"#,
-        target = target_lit,
-    );
-    let click_script = format!(
-        r#"(() => {{
-            const dlg = document.querySelector('[data-aijia-confirm-dialog]')
-                || document.querySelector('[role="alertdialog"]');
-            if (!dlg) return {{ok: false, reason: 'no_dialog'}};
-            const btn = dlg.querySelector('[data-aijia-confirm-action="' + {target} + '"]');
-            if (!btn) return {{ok: false, reason: 'action_button_not_found', action: {target}}};
-            btn.click();
-            return {{ok: true, action: {target}}};
-        }})()"#,
-        target = target_lit,
-    );
-
-    let deadline = Instant::now() + Duration::from_secs(timeout);
-    let mut last = Value::Null;
-    while Instant::now() < deadline {
-        let probe = eval_json(client, &probe_script, window).await?;
-        last = probe.clone();
-        if probe.get("ready").and_then(Value::as_bool) == Some(true) {
-            return eval_json(client, &click_script, window).await;
-        }
-        tokio::time::sleep(Duration::from_millis(200)).await;
-    }
-    Ok(json!({
-        "ok": false,
-        "reason": "timeout",
-        "timeoutSec": timeout,
-        "lastProbe": last,
     }))
 }
 

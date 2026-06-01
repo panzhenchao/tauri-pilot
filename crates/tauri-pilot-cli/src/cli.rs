@@ -310,7 +310,10 @@ pub(crate) enum AijiaCommand {
     },
     /// Switch the active workspace by name.
     SelectWorkspace { name: String },
-    /// Restart the AIjia app and wait until ready.
+    /// NOT IMPLEMENTED YET — would sever the pilot socket and needs a
+    /// reconnect protocol. Calling this returns `{ok: false}` without
+    /// touching the app. Workaround: `goto home` + `goto employees` to
+    /// force a store reload, then continue.
     RestartApp,
     /// Dump the current UI state as JSON.
     Where,
@@ -341,16 +344,6 @@ pub(crate) enum AijiaCommand {
         /// Wait until the corresponding route loads (up to 5s) before returning.
         #[arg(long, default_value_t = false)]
         wait: bool,
-    },
-    /// Click the cancel or confirm button inside a Radix AlertDialog
-    /// (matched by data-aijia-confirm-action). Waits for the dialog to appear
-    /// up to --timeout seconds.
-    HandleDialog {
-        /// `accept` clicks the confirm button; `dismiss` clicks cancel.
-        #[arg(long)]
-        action: String,
-        #[arg(long, default_value = "10")]
-        timeout: u64,
     },
     /// Dump tool calls that happened in a turn, as recorded by chatStore.
     /// Defaults to the last turn (the assistant message after the most
@@ -400,6 +393,12 @@ pub(crate) enum AijiaCommand {
     },
     /// Pick the agenda editor's "执行员工" native select by employee `name`
     /// (substring match against option text — `{avatar} {name} · {role}`).
+    ///
+    /// CURRENT STATE: AgendaItemEditor does NOT render an employee picker —
+    /// `organizerEmployeeId` is only passed in via props, and the backend
+    /// silently falls back to `default` when the request omits it. This CLI
+    /// will return `employee_select_missing_or_no_employees` until a picker
+    /// is added to the UI. Calling it has no effect on the saved agenda.
     AgendaSetEmployee {
         #[arg(long)]
         name: String,
