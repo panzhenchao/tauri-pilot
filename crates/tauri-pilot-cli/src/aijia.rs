@@ -165,10 +165,49 @@ pub(crate) async fn dispatch(
             skill_import_pick(client, &variant, window).await
         }
         AijiaCommand::SkillCards => skill_cards(client, window).await,
+        AijiaCommand::DialogSnapshot => dialog_snapshot(client, window).await,
+        AijiaCommand::DialogClick {
+            action,
+            question_index,
+            option_index,
+            timeout,
+        } => dialog_click(client, &action, question_index, option_index, timeout, window).await,
     }
 }
 
 // ─── eval helpers ────────────────────────────────────────────────────────────
+
+/// Radix DropdownMenuTrigger / SelectTrigger / AppDropdown trigger 都监听
+/// `onPointerDown` 而不是 `click` —— 单纯 `el.click()` 不会打开 dropdown。
+/// 这段 JS 合成完整的 PointerEvent → MouseEvent 序列。
+const RADIX_DROPDOWN_CLICK_HELPER_JS: &str = r#"
+function __aijia_radixDropdownClick(el) {
+    const rect = el.getBoundingClientRect();
+    const x = rect.left + rect.width / 2;
+    const y = rect.top + rect.height / 2;
+    const base = {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        clientX: x,
+        clientY: y,
+        screenX: x,
+        screenY: y,
+        button: 0,
+        buttons: 1,
+    };
+    const pointerOpts = Object.assign({}, base, {
+        pointerId: 1,
+        pointerType: 'mouse',
+        isPrimary: true,
+    });
+    el.dispatchEvent(new PointerEvent('pointerdown', pointerOpts));
+    el.dispatchEvent(new MouseEvent('mousedown', base));
+    el.dispatchEvent(new PointerEvent('pointerup', pointerOpts));
+    el.dispatchEvent(new MouseEvent('mouseup', base));
+    el.dispatchEvent(new MouseEvent('click', base));
+}
+"#;
 
 async fn eval_json(client: &mut Client, script: &str, window: Option<&str>) -> Result<Value> {
     client
@@ -1685,6 +1724,178 @@ async fn handle_dialog(
     }))
 }
 
+// ─── dialog: snapshot + click ───────────────────────────────────────────────
+//
+// 统一查询 / click `[data-aijia-dialog]` 容器，覆盖 permission-ask /
+// ask-user-question / confirm 三类弹窗。
+
+async fn dialog_snapshot(client: &mut Client, window: Option<&str>) -> Result<Value> {
+    let script = r#"(() => {
+        const dialog = document.querySelector('[data-aijia-dialog]');
+        if (!dialog) {
+            return {ok: true, dialog: null};
+        }
+        const ds = dialog.dataset || {};
+        const title = dialog.querySelector('[data-aijia-dialog-title]')?.textContent?.trim() || null;
+        const description = dialog.querySelector('[data-aijia-dialog-description]')?.textContent?.trim() || null;
+        const actions = Array.from(dialog.querySelectorAll('[data-aijia-dialog-action]')).map(el => {
+            const ed = el.dataset || {};
+            const item = {
+                action: ed.aijiaDialogAction || null,
+                label: el.textContent?.trim() || null,
+            };
+            if (ed.aijiaDialogQuestionIndex != null && ed.aijiaDialogQuestionIndex !== '') {
+                item.questionIndex = Number(ed.aijiaDialogQuestionIndex);
+            }
+            if (ed.aijiaDialogOptionIndex != null && ed.aijiaDialogOptionIndex !== '') {
+                item.optionIndex = Number(ed.aijiaDialogOptionIndex);
+            }
+            if (ed.aijiaDialogOptionLabel != null && ed.aijiaDialogOptionLabel !== '') {
+                item.optionLabel = ed.aijiaDialogOptionLabel;
+            }
+            return item;
+        });
+        return {
+            ok: true,
+            dialog: {
+                kind: ds.aijiaDialog || null,
+                tool: ds.aijiaDialogTool || null,
+                title: title,
+                description: description,
+                actions: actions,
+            },
+        };
+    })()"#;
+    eval_json(client, script, window).await
+}
+
+async fn dialog_click(
+    client: &mut Client,
+    action: &str,
+    question_index: Option<u32>,
+    option_index: Option<u32>,
+    timeout: u64,
+    window: Option<&str>,
+) -> Result<Value> {
+    match action {
+        "allow" | "deny" | "cancel" | "confirm" | "option" => {}
+        _ => {
+            return Ok(json!({
+                "ok": false,
+                "reason": "invalid_action",
+                "expected": ["allow", "deny", "cancel", "confirm", "option"],
+                "got": action,
+            }));
+        }
+    }
+    if action != "option" && (question_index.is_some() || option_index.is_some()) {
+        return Ok(json!({
+            "ok": false,
+            "reason": "indices_only_valid_for_option",
+            "hint": "--question-index / --option-index only apply to --action option",
+            "action": action,
+        }));
+    }
+    let action_lit = js_string_literal(action);
+    let q_lit = match question_index {
+        None => "null".to_string(),
+        Some(n) => n.to_string(),
+    };
+    let o_lit = match option_index {
+        None => "null".to_string(),
+        Some(n) => n.to_string(),
+    };
+    let probe_script = format!(
+        r#"(() => {{
+            const dialog = document.querySelector('[data-aijia-dialog]');
+            if (!dialog) return {{ready: false, reason: 'no_dialog'}};
+            const action = {action};
+            const wantQ = {q};
+            const wantO = {o};
+            let buttons = Array.from(dialog.querySelectorAll('[data-aijia-dialog-action="' + action + '"]'));
+            if (action === 'option') {{
+                if (wantQ != null) {{
+                    buttons = buttons.filter(b => Number(b.dataset.aijiaDialogQuestionIndex) === wantQ);
+                }}
+                if (wantO != null) {{
+                    buttons = buttons.filter(b => Number(b.dataset.aijiaDialogOptionIndex) === wantO);
+                }}
+            }}
+            return {{ready: buttons.length === 1, hasDialog: true, count: buttons.length}};
+        }})()"#,
+        action = action_lit,
+        q = q_lit,
+        o = o_lit,
+    );
+    let click_script = format!(
+        r#"(() => {{
+            const dialog = document.querySelector('[data-aijia-dialog]');
+            if (!dialog) return {{ok: false, reason: 'no_dialog'}};
+            const action = {action};
+            const wantQ = {q};
+            const wantO = {o};
+            let buttons = Array.from(dialog.querySelectorAll('[data-aijia-dialog-action="' + action + '"]'));
+            if (action === 'option') {{
+                if (wantQ != null) {{
+                    buttons = buttons.filter(b => Number(b.dataset.aijiaDialogQuestionIndex) === wantQ);
+                }}
+                if (wantO != null) {{
+                    buttons = buttons.filter(b => Number(b.dataset.aijiaDialogOptionIndex) === wantO);
+                }}
+            }}
+            if (buttons.length === 0) {{
+                return {{ok: false, reason: 'action_button_not_found', action: action}};
+            }}
+            if (buttons.length > 1) {{
+                return {{
+                    ok: false,
+                    reason: 'ambiguous_action_button',
+                    action: action,
+                    count: buttons.length,
+                    hint: 'specify --question-index / --option-index to disambiguate',
+                }};
+            }}
+            const btn = buttons[0];
+            if (btn.disabled) {{
+                return {{ok: false, reason: 'action_button_disabled', action: action}};
+            }}
+            btn.click();
+            return {{
+                ok: true,
+                action: action,
+                questionIndex: btn.dataset.aijiaDialogQuestionIndex != null
+                    && btn.dataset.aijiaDialogQuestionIndex !== ''
+                    ? Number(btn.dataset.aijiaDialogQuestionIndex)
+                    : null,
+                optionIndex: btn.dataset.aijiaDialogOptionIndex != null
+                    && btn.dataset.aijiaDialogOptionIndex !== ''
+                    ? Number(btn.dataset.aijiaDialogOptionIndex)
+                    : null,
+            }};
+        }})()"#,
+        action = action_lit,
+        q = q_lit,
+        o = o_lit,
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(timeout);
+    let mut last = Value::Null;
+    while Instant::now() < deadline {
+        let probe = eval_json(client, &probe_script, window).await?;
+        last = probe.clone();
+        if probe.get("ready").and_then(Value::as_bool) == Some(true) {
+            return eval_json(client, &click_script, window).await;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    Ok(json!({
+        "ok": false,
+        "reason": "timeout",
+        "timeoutSec": timeout,
+        "lastProbe": last,
+    }))
+}
+
 // ─── tool-call introspection ────────────────────────────────────────────────
 
 fn parse_turn_arg(turn: &str) -> Result<Option<usize>> {
@@ -2206,14 +2417,18 @@ async fn workspace_queue_path(
 }
 
 async fn workspace_open_picker(client: &mut Client, window: Option<&str>) -> Result<Value> {
-    let script = r#"(() => {
-        const btn = document.querySelector('[data-aijia-workspace-trigger]');
-        if (!btn) return {ok: false, reason: 'workspace_trigger_not_found'};
-        if (btn.disabled) return {ok: false, reason: 'workspace_trigger_disabled'};
-        btn.click();
-        return {ok: true};
-    })()"#;
-    eval_json(client, script, window).await
+    let script = format!(
+        r#"(() => {{
+            {helper}
+            const btn = document.querySelector('[data-aijia-workspace-trigger]');
+            if (!btn) return {{ok: false, reason: 'workspace_trigger_not_found'}};
+            if (btn.disabled) return {{ok: false, reason: 'workspace_trigger_disabled'}};
+            __aijia_radixDropdownClick(btn);
+            return {{ok: true}};
+        }})()"#,
+        helper = RADIX_DROPDOWN_CLICK_HELPER_JS,
+    );
+    eval_json(client, &script, window).await
 }
 
 async fn workspace_pick(
@@ -2351,14 +2566,18 @@ async fn skill_import_queue(
 }
 
 async fn skill_import_open(client: &mut Client, window: Option<&str>) -> Result<Value> {
-    let script = r#"(() => {
-        const btn = document.querySelector('[data-aijia-skill-import-trigger]');
-        if (!btn) return {ok: false, reason: 'skill_import_trigger_not_found'};
-        if (btn.disabled) return {ok: false, reason: 'skill_import_trigger_disabled'};
-        btn.click();
-        return {ok: true};
-    })()"#;
-    eval_json(client, script, window).await
+    let script = format!(
+        r#"(() => {{
+            {helper}
+            const btn = document.querySelector('[data-aijia-skill-import-trigger]');
+            if (!btn) return {{ok: false, reason: 'skill_import_trigger_not_found'}};
+            if (btn.disabled) return {{ok: false, reason: 'skill_import_trigger_disabled'}};
+            __aijia_radixDropdownClick(btn);
+            return {{ok: true}};
+        }})()"#,
+        helper = RADIX_DROPDOWN_CLICK_HELPER_JS,
+    );
+    eval_json(client, &script, window).await
 }
 
 async fn skill_import_pick(

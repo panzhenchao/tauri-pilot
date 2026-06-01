@@ -655,6 +655,33 @@ pub(crate) enum AijiaCommand {
     /// catalog without opening individual cards. Pre: skill-center page
     /// must be active.
     SkillCards,
+    /// Read the currently visible dialog (permission-ask / ask-user-question /
+    /// confirm) into a JSON snapshot. Queries `[data-aijia-dialog]` and
+    /// returns `{kind, tool, title, description, actions}`, or
+    /// `{ok: true, dialog: null}` when no dialog is open. Use to inspect
+    /// pending dialogs before deciding which `dialog-click --action ...` to
+    /// chain.
+    DialogSnapshot,
+    /// Click one action button inside the currently visible dialog. Waits up
+    /// to `--timeout` seconds for the dialog to appear.
+    ///
+    /// `--action` ∈ `allow` | `deny` | `cancel` | `confirm` | `option`.
+    /// For `--action option` in `ask-user-question`, pass `--question-index N`
+    /// and `--option-index M` to disambiguate which option button to click.
+    DialogClick {
+        #[arg(long)]
+        action: String,
+        /// 0-based question index inside an `ask-user-question` dialog.
+        /// Only meaningful for `--action option`.
+        #[arg(long)]
+        question_index: Option<u32>,
+        /// 0-based option index inside the question identified by
+        /// `--question-index`. Only meaningful for `--action option`.
+        #[arg(long)]
+        option_index: Option<u32>,
+        #[arg(long, default_value = "10")]
+        timeout: u64,
+    },
 }
 
 #[derive(Subcommand, Debug)]
