@@ -491,6 +491,25 @@ pub(crate) enum AijiaCommand {
     /// is skipped and the queued paths flow through `makePendingAttachment`
     /// → `insertAttachmentTokens` as if the user had picked them.
     ComposerClickPlus,
+    /// Submit the composer by dispatching synthetic `Enter` to the
+    /// ProseMirror editor. Required when the visible send button is hidden
+    /// (e.g. during streaming the button is replaced by "停止"). The
+    /// composer's keydown handler routes Enter → trySubmit; the backend
+    /// PendingQueueManager buffers the new message when the current turn
+    /// is still streaming. Pre: composer is mounted and not empty.
+    ComposerSubmit,
+    /// Snapshot the pending-message queue for the active conversation.
+    /// Reads `window.__aijia.pendingStore.getState().bySession[sessionId]`
+    /// where `sessionId` defaults to `chatStore.activeConversationId`.
+    /// Returns `{ok, sessionId, count, items: [{id, source, text,
+    /// senderNick, attachments, receivedAt}]}`. Use to verify messages
+    /// queued via `composer-submit` during streaming landed in the queue.
+    PendingSnapshot {
+        /// Override the session id. If omitted, uses
+        /// `chatStore.activeConversationId`.
+        #[arg(long)]
+        session_id: Option<String>,
+    },
     /// Click the "雇佣员工" / 卡片市场入口按钮 (`[data-aijia-hire-button]`).
     /// Pre: employees page (or home) is active. Post: HireWizard mounts.
     /// `--variant template-market` 点顶部文字按钮；`--variant add-card` 点

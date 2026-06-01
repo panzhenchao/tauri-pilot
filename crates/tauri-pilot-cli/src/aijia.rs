@@ -117,6 +117,10 @@ pub(crate) async fn dispatch(
             composer_queue_files(client, &paths, window).await
         }
         AijiaCommand::ComposerClickPlus => composer_click_plus(client, window).await,
+        AijiaCommand::ComposerSubmit => composer_submit(client, window).await,
+        AijiaCommand::PendingSnapshot { session_id } => {
+            pending_snapshot(client, session_id.as_deref(), window).await
+        }
         AijiaCommand::HireOpen { variant } => hire_open(client, &variant, window).await,
         AijiaCommand::HireWait { timeout } => hire_wait(client, timeout, window).await,
         AijiaCommand::HireSelectTemplate { id, name } => {
@@ -1100,6 +1104,64 @@ async fn composer_click_plus(client: &mut Client, window: Option<&str>) -> Resul
         return {ok: true};
     })()"#;
     eval_json(client, script, window).await
+}
+
+async fn composer_submit(client: &mut Client, window: Option<&str>) -> Result<Value> {
+    // ProseMirror 忽略 synthetic input events（见 type_message 注释），但 RichComposer
+    // 自己在 capture phase 监听 keydown，synthetic KeyboardEvent 可被它捕获。
+    let script = r#"(() => {
+        const ed = document.querySelector('.ProseMirror');
+        if (!ed) return {ok: false, reason: 'composer_not_mounted'};
+        ed.focus();
+        const evt = new KeyboardEvent('keydown', {
+            key: 'Enter',
+            code: 'Enter',
+            keyCode: 13,
+            which: 13,
+            bubbles: true,
+            cancelable: true,
+        });
+        const propagated = ed.dispatchEvent(evt);
+        return {
+            ok: true,
+            defaultPrevented: !propagated,
+            text: ed.textContent || '',
+        };
+    })()"#;
+    eval_json(client, script, window).await
+}
+
+async fn pending_snapshot(
+    client: &mut Client,
+    session_id_override: Option<&str>,
+    window: Option<&str>,
+) -> Result<Value> {
+    let override_lit = match session_id_override {
+        None => "null".to_string(),
+        Some(s) => js_string_literal(s),
+    };
+    let script = format!(
+        r#"(() => {{
+            const aj = window.__aijia;
+            if (!aj) return {{ok: false, reason: 'dev_hooks_unavailable'}};
+            const ps = aj.pendingStore?.getState?.();
+            if (!ps) return {{ok: false, reason: 'pending_store_not_exposed'}};
+            const cs = aj.chatStore?.getState?.();
+            const sessionId = {override} || cs?.activeConversationId || null;
+            if (!sessionId) {{
+                return {{ok: false, reason: 'no_active_session'}};
+            }}
+            const items = ps.bySession?.[sessionId] || [];
+            return {{
+                ok: true,
+                sessionId: sessionId,
+                count: items.length,
+                items: items,
+            }};
+        }})()"#,
+        override = override_lit,
+    );
+    eval_json(client, &script, window).await
 }
 
 // ─── settings + logout: atomic ──────────────────────────────────────────────
