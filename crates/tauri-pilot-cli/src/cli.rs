@@ -700,6 +700,47 @@ pub(crate) enum AijiaCommand {
         #[arg(long, default_value = "10")]
         timeout: u64,
     },
+    /// Dump every generated-file card currently rendered in the chat as JSON.
+    /// Each entry includes `index` (DOM order, 0-based), `title`, `sub`,
+    /// `appName` (primary button text), `filePath` (from
+    /// `data-aijia-file-path`), and the primary button's disabled state.
+    /// Use this as a debug / fallback when `file-card-click --file-path` cannot
+    /// locate the right card.
+    FileCardSnapshot,
+    /// Trigger one of the three actions on a generated-file card:
+    ///   - `preview` → click the primary "预览" button (artifact path only).
+    ///   - `open`    → open chevron dropdown, click "用默认应用打开" menuitem.
+    ///   - `reveal`  → open chevron dropdown, click "在文件夹中显示" menuitem.
+    /// Card location precedence: `--file-path` > `--file-name` > `--card-index`
+    /// (defaults to -1 = last card in DOM order).
+    FileCardClick {
+        /// Action verb: `preview` | `open` | `reveal`.
+        #[arg(long)]
+        action: String,
+        /// Exact match against the card root's `data-aijia-file-path`
+        /// attribute. Most stable locator.
+        #[arg(long)]
+        file_path: Option<String>,
+        /// Substring match against the card title (filename).
+        /// Ignored when `--file-path` is set.
+        #[arg(long)]
+        file_name: Option<String>,
+        /// 0-based DOM order; negative values count from the end.
+        /// Ignored when `--file-path` or `--file-name` is set.
+        /// Defaults to `-1` (last card).
+        #[arg(long)]
+        card_index: Option<i32>,
+        /// Max seconds to poll for a Radix dropdown menuitem after clicking
+        /// chevron (only relevant for `--action open|reveal`). Default 3.
+        #[arg(long, default_value = "3")]
+        menu_timeout: u64,
+    },
+    /// Dump the current `FilePreviewPane` state — `isOpen`, `header`
+    /// (`textContent` of `[data-aijia-file-preview-header]`), `body`
+    /// (`textContent` of `[data-aijia-file-preview-body]`). Designed for
+    /// rules.md to verify preview pane content after `file-card-click
+    /// --action preview` lands.
+    FilePreviewSnapshot,
 }
 
 #[derive(Subcommand, Debug)]

@@ -173,6 +173,26 @@ pub(crate) async fn dispatch(
             option_index,
             timeout,
         } => dialog_click(client, &action, question_index, option_index, timeout, window).await,
+        AijiaCommand::FileCardSnapshot => file_card_snapshot(client, window).await,
+        AijiaCommand::FileCardClick {
+            action,
+            file_path,
+            file_name,
+            card_index,
+            menu_timeout,
+        } => {
+            file_card_click(
+                client,
+                &action,
+                file_path.as_deref(),
+                file_name.as_deref(),
+                card_index,
+                menu_timeout,
+                window,
+            )
+            .await
+        }
+        AijiaCommand::FilePreviewSnapshot => file_preview_snapshot(client, window).await,
     }
 }
 
@@ -2617,6 +2637,191 @@ async fn skill_cards(client: &mut Client, window: Option<&str>) -> Result<Value>
                 id: c.getAttribute('data-aijia-skill-id') || null,
                 source: c.getAttribute('data-aijia-skill-source') || null,
             })),
+        };
+    })()"#;
+    eval_json(client, script, window).await
+}
+
+// ─── generated-file card: atomic snapshot / click ─────────────────────────
+
+async fn file_card_snapshot(client: &mut Client, window: Option<&str>) -> Result<Value> {
+    let script = r#"(() => {
+        const cards = [...document.querySelectorAll('[data-testid="generated-file-card"]')];
+        return {
+            ok: true,
+            count: cards.length,
+            cards: cards.map((c, i) => {
+                const buttons = [...c.querySelectorAll('button')];
+                const primary = buttons[0] || null;
+                return {
+                    index: i,
+                    title: c.querySelector('.truncate.text-sm')?.textContent?.trim() ?? null,
+                    sub: c.querySelector('.truncate.text-xs')?.textContent?.trim() ?? null,
+                    appName: primary?.textContent?.trim() ?? null,
+                    filePath: c.getAttribute('data-aijia-file-path') || null,
+                    primaryDisabled: !!primary?.disabled,
+                    buttonCount: buttons.length,
+                };
+            }),
+        };
+    })()"#;
+    eval_json(client, script, window).await
+}
+
+async fn file_card_click(
+    client: &mut Client,
+    action: &str,
+    file_path: Option<&str>,
+    file_name: Option<&str>,
+    card_index: Option<i32>,
+    menu_timeout: u64,
+    window: Option<&str>,
+) -> Result<Value> {
+    let action_trim = action.trim();
+    let menu_label: Option<&str> = match action_trim {
+        "preview" => None,
+        "open" => Some("用默认应用打开"),
+        "reveal" => Some("在文件夹中显示"),
+        _ => {
+            return Ok(json!({
+                "ok": false,
+                "reason": "invalid_action",
+                "expected": ["preview", "open", "reveal"],
+                "got": action,
+            }));
+        }
+    };
+    let fp_lit = match file_path {
+        Some(s) => js_string_literal(s),
+        None => "null".to_string(),
+    };
+    let fn_lit = match file_name {
+        Some(s) => js_string_literal(s),
+        None => "null".to_string(),
+    };
+    // Default to -1 (last card) when no locator is supplied.
+    let ci_lit = card_index.unwrap_or(-1).to_string();
+    let action_lit = js_string_literal(action_trim);
+    let menu_lit = match menu_label {
+        Some(s) => js_string_literal(s),
+        None => "null".to_string(),
+    };
+    let timeout_ms = (menu_timeout.saturating_mul(1000)).to_string();
+    let script = format!(
+        r#"(() => {{
+            {helper}
+            const cards = [...document.querySelectorAll('[data-testid="generated-file-card"]')];
+            if (cards.length === 0) return {{ok: false, reason: 'no_cards_rendered'}};
+            const wantFp = {fp};
+            const wantFn = {fn};
+            const ci = {ci};
+            let card = null;
+            let matchedBy = null;
+            if (wantFp != null) {{
+                card = cards.find(c => c.getAttribute('data-aijia-file-path') === wantFp) || null;
+                matchedBy = 'file_path';
+            }} else if (wantFn != null) {{
+                card = cards.find(c => (c.querySelector('.truncate.text-sm')?.textContent ?? '').includes(wantFn)) || null;
+                matchedBy = 'file_name';
+            }} else {{
+                let idx = ci < 0 ? cards.length + ci : ci;
+                if (idx < 0 || idx >= cards.length) {{
+                    return {{ok: false, reason: 'card_index_out_of_range', got: ci, count: cards.length}};
+                }}
+                card = cards[idx];
+                matchedBy = 'card_index';
+            }}
+            if (!card) {{
+                return {{
+                    ok: false,
+                    reason: 'card_not_found',
+                    matchedBy,
+                    requestedFilePath: wantFp,
+                    requestedFileName: wantFn,
+                    requestedIndex: ci,
+                    available: cards.map(c => ({{
+                        filePath: c.getAttribute('data-aijia-file-path') || null,
+                        title: c.querySelector('.truncate.text-sm')?.textContent?.trim() ?? null,
+                    }})),
+                }};
+            }}
+            const filePath = card.getAttribute('data-aijia-file-path') || null;
+            const title = card.querySelector('.truncate.text-sm')?.textContent?.trim() ?? null;
+            const buttons = [...card.querySelectorAll('button')];
+            const action = {act};
+            if (action === 'preview') {{
+                const primary = buttons[0];
+                if (!primary) return {{ok: false, reason: 'primary_button_missing'}};
+                if (primary.disabled) return {{ok: false, reason: 'primary_button_disabled'}};
+                primary.click();
+                return {{ok: true, action, filePath, title, matchedBy}};
+            }}
+            // open / reveal: pointerdown chevron (Radix trigger), poll portal.
+            const chevron = buttons[buttons.length - 1];
+            if (!chevron || chevron === buttons[0]) {{
+                return {{ok: false, reason: 'dropdown_no_trigger', buttonCount: buttons.length}};
+            }}
+            __aijia_radixDropdownClick(chevron);
+            const wantLabel = {menu};
+            const deadline = Date.now() + {timeout};
+            return new Promise((resolve) => {{
+                const tick = () => {{
+                    const items = [...document.querySelectorAll('[role="menuitem"]')];
+                    const match = items.find(it => (it.textContent || '').includes(wantLabel));
+                    if (match) {{
+                        if (match.getAttribute('aria-disabled') === 'true') {{
+                            resolve({{ok: false, reason: 'menuitem_disabled', label: wantLabel}});
+                            return;
+                        }}
+                        match.click();
+                        resolve({{
+                            ok: true,
+                            action,
+                            filePath,
+                            title,
+                            matchedBy,
+                            label: (match.textContent || '').trim(),
+                        }});
+                        return;
+                    }}
+                    if (Date.now() >= deadline) {{
+                        resolve({{
+                            ok: false,
+                            reason: 'menuitem_not_found',
+                            label: wantLabel,
+                            visibleMenuitems: items.map(it => (it.textContent || '').trim()),
+                        }});
+                        return;
+                    }}
+                    setTimeout(tick, 100);
+                }};
+                tick();
+            }});
+        }})()"#,
+        helper = RADIX_DROPDOWN_CLICK_HELPER_JS,
+        fp = fp_lit,
+        fn = fn_lit,
+        ci = ci_lit,
+        act = action_lit,
+        menu = menu_lit,
+        timeout = timeout_ms,
+    );
+    eval_json(client, &script, window).await
+}
+
+async fn file_preview_snapshot(client: &mut Client, window: Option<&str>) -> Result<Value> {
+    let script = r#"(() => {
+        const header = document.querySelector('[data-aijia-file-preview-header]');
+        const body = document.querySelector('[data-aijia-file-preview-body]');
+        if (!header && !body) {
+            return {ok: true, isOpen: false, reason: 'preview_not_open'};
+        }
+        return {
+            ok: true,
+            isOpen: true,
+            header: header ? (header.textContent || '').trim() : null,
+            body: body ? (body.textContent || '').trim() : null,
+            bodyLength: body ? (body.textContent || '').length : 0,
         };
     })()"#;
     eval_json(client, script, window).await
