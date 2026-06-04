@@ -60,12 +60,18 @@ pub fn init<R: tauri::Runtime>() -> tauri::plugin::TauriPlugin<R> {
                 let list_fn = make_list_fn(app);
                 let focus_fn = make_focus_fn(app);
 
-                let (listener, guard) = server::bind(&socket_path).map_err(|e| {
-                    tracing::error!(path = %socket_path.display(), "failed to bind socket: {e}");
-                    e
-                })?;
-
                 let recorder = Recorder::new();
+
+                let (listener, guard) =
+                    tauri::async_runtime::block_on(async { server::bind(&socket_path) }).map_err(
+                        |e| {
+                            tracing::error!(
+                                path = %socket_path.display(),
+                                "failed to bind socket: {e}"
+                            );
+                            e
+                        },
+                    )?;
 
                 tauri::async_runtime::spawn(server::run(
                     listener,
