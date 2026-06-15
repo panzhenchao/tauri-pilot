@@ -158,6 +158,21 @@ pub(crate) async fn dispatch(
             workspace_pick(client, &variant, path.as_deref(), window).await
         }
         AijiaCommand::ExpertTeamStart { name } => expert_team_start(client, &name, window).await,
+        AijiaCommand::SkillCenterOpen => skill_center_open(client, window).await,
+        AijiaCommand::SkillCenterTab { name } => skill_center_tab(client, &name, window).await,
+        AijiaCommand::SkillCenterList => skill_center_list(client, window).await,
+        AijiaCommand::SkillCenterToggle { id, enabled } => {
+            skill_center_toggle(client, &id, enabled, window).await
+        }
+        AijiaCommand::SkillMarketList => skill_market_list(client, window).await,
+        AijiaCommand::SkillMarketAdd { id } => skill_market_add(client, &id, window).await,
+        AijiaCommand::SkillDetailOpen { id } => skill_detail_open(client, &id, window).await,
+        AijiaCommand::SkillDetailSnapshot => skill_detail_snapshot(client, window).await,
+        AijiaCommand::SkillPickerOpen => skill_picker_open(client, window).await,
+        AijiaCommand::SlashSuggestions { query } => slash_suggestions(client, &query, window).await,
+        AijiaCommand::SyncBuiltinSkills { mode } => {
+            sync_builtin_skills(client, &mode, window).await
+        }
         AijiaCommand::SkillImportQueue { path } => {
             skill_import_queue(client, &path, window).await
         }
@@ -2544,6 +2559,427 @@ async fn expert_team_start(
 
 // ─── skill-center: import flow + cards ──────────────────────────────────────
 
+fn normalize_skill_tab_key(name: &str) -> Option<&'static str> {
+    match name.trim().to_lowercase().as_str() {
+        "market" | "市场" => Some("market"),
+        "builtin" | "built-in" | "built_in" | "内置" => Some("builtin"),
+        "installed" | "install" | "已安装" => Some("installed"),
+        _ => None,
+    }
+}
+
+fn normalize_skill_sync_mode(mode: &str) -> Option<&'static str> {
+    match mode.trim().to_lowercase().as_str() {
+        "builtin" | "built-in" | "built_in" | "内置" | "official" => Some("builtin"),
+        "local" | "installed" | "本地" | "已安装" => Some("local"),
+        _ => None,
+    }
+}
+
+async fn skill_center_open(client: &mut Client, window: Option<&str>) -> Result<Value> {
+    let result = goto(client, "skill-center", true, window).await?;
+    if result.get("ok").and_then(Value::as_bool) == Some(true) {
+        return Ok(json!({"ok": true, "route": "skill-center"}));
+    }
+    Ok(result)
+}
+
+async fn skill_center_tab(client: &mut Client, name: &str, window: Option<&str>) -> Result<Value> {
+    let Some(key) = normalize_skill_tab_key(name) else {
+        return Ok(json!({
+            "ok": false,
+            "reason": "invalid_skill_tab",
+            "valid": ["market", "builtin", "installed", "市场", "内置", "已安装"],
+            "got": name,
+        }));
+    };
+    let key_lit = js_string_literal(key);
+    let script = format!(
+        r#"(() => {{
+            const key = {key};
+            const btn = document.querySelector('[data-aijia-skill-tab="' + key + '"]');
+            if (!btn) return {{
+                ok: false,
+                reason: 'skill_tab_not_found',
+                requested: key,
+                available: [...document.querySelectorAll('[data-aijia-skill-tab]')]
+                    .map(el => el.getAttribute('data-aijia-skill-tab')),
+            }};
+            if (btn.disabled) return {{ok: false, reason: 'skill_tab_disabled', requested: key}};
+            btn.click();
+            return {{ok: true, activeTab: key}};
+        }})()"#,
+        key = key_lit,
+    );
+    eval_json(client, &script, window).await
+}
+
+async fn skill_center_list(client: &mut Client, window: Option<&str>) -> Result<Value> {
+    let script = r#"(() => {
+        const text = (el) => (el?.textContent || '').replace(/\s+/g, ' ').trim();
+        const boolAttr = (el, name) => {
+            const value = el.getAttribute(name);
+            return value == null ? null : value === 'true';
+        };
+        const visible = (el) => {
+            const style = window.getComputedStyle(el);
+            return style.display !== 'none' && style.visibility !== 'hidden' && el.getClientRects().length > 0;
+        };
+        const titleOf = (card) => {
+            const node = [...card.querySelectorAll('span,div')]
+                .find(el => String(el.className || '').includes('font-semibold') && text(el));
+            return text(node) || null;
+        };
+        const snapshot = (card) => {
+            const id = card.getAttribute('data-aijia-skill-id') || null;
+            const toggle = id
+                ? [...document.querySelectorAll('[data-aijia-skill-toggle]')]
+                    .find(el => el.getAttribute('data-aijia-skill-toggle') === id)
+                : null;
+            return {
+                id,
+                title: titleOf(card),
+                source: card.getAttribute('data-aijia-skill-source') || null,
+                enabled: boolAttr(card, 'data-aijia-skill-enabled'),
+                visible: visible(card),
+                version: card.querySelector('[data-testid="skill-card-version"]')?.textContent?.trim() || null,
+                marketCard: boolAttr(card, 'data-aijia-skill-market-card'),
+                installed: boolAttr(card, 'data-aijia-skill-installed'),
+                hasToggle: !!toggle,
+                toggleChecked: toggle ? toggle.getAttribute('aria-checked') === 'true' : null,
+            };
+        };
+        const cards = [...document.querySelectorAll('[data-aijia-skill-card]')];
+        return {ok: true, count: cards.length, cards: cards.map(snapshot)};
+    })()"#;
+    eval_json(client, script, window).await
+}
+
+async fn skill_center_toggle(
+    client: &mut Client,
+    id: &str,
+    enabled: bool,
+    window: Option<&str>,
+) -> Result<Value> {
+    let id_lit = js_string_literal(id);
+    let desired = if enabled { "true" } else { "false" };
+    let script = format!(
+        r#"(() => {{
+            const id = {id};
+            const desired = {desired};
+            const toggle = [...document.querySelectorAll('[data-aijia-skill-toggle]')]
+                .find(el => el.getAttribute('data-aijia-skill-toggle') === id);
+            if (!toggle) return {{
+                ok: false,
+                reason: 'skill_toggle_not_found',
+                id,
+                available: [...document.querySelectorAll('[data-aijia-skill-toggle]')]
+                    .map(el => el.getAttribute('data-aijia-skill-toggle')),
+            }};
+            if (toggle.disabled || toggle.getAttribute('aria-disabled') === 'true') {{
+                return {{ok: false, reason: 'skill_toggle_disabled', id}};
+            }}
+            const read = () => toggle.getAttribute('aria-checked') === 'true'
+                || toggle.getAttribute('data-state') === 'checked';
+            const before = read();
+            if (before === desired) return {{ok: true, id, enabled: before, changed: false}};
+            toggle.click();
+            return new Promise((resolve) => {{
+                const deadline = Date.now() + 3000;
+                const poll = () => {{
+                    const current = read();
+                    if (current === desired) {{
+                        resolve({{ok: true, id, enabled: current, changed: true}});
+                    }} else if (Date.now() >= deadline) {{
+                        resolve({{ok: false, reason: 'skill_toggle_state_timeout', id, expected: desired, actual: current}});
+                    }} else {{
+                        setTimeout(poll, 100);
+                    }}
+                }};
+                poll();
+            }});
+        }})()"#,
+        id = id_lit,
+        desired = desired,
+    );
+    eval_json(client, &script, window).await
+}
+
+async fn skill_market_list(client: &mut Client, window: Option<&str>) -> Result<Value> {
+    let script = r#"(() => {
+        const text = (el) => (el?.textContent || '').replace(/\s+/g, ' ').trim();
+        const boolAttr = (el, name) => {
+            const value = el.getAttribute(name);
+            return value == null ? null : value === 'true';
+        };
+        const titleOf = (card) => {
+            const node = [...card.querySelectorAll('span,div')]
+                .find(el => String(el.className || '').includes('font-semibold') && text(el));
+            return text(node) || null;
+        };
+        const cards = [...document.querySelectorAll('[data-aijia-skill-market-card="true"]')];
+        return {
+            ok: true,
+            count: cards.length,
+            cards: cards.map(card => {
+                const id = card.getAttribute('data-aijia-skill-id') || null;
+                const action = card.querySelector('[data-aijia-skill-market-action="add"]');
+                return {
+                    id,
+                    packageId: id,
+                    title: titleOf(card),
+                    source: card.getAttribute('data-aijia-skill-source') || null,
+                    installed: boolAttr(card, 'data-aijia-skill-installed'),
+                    actionLabel: text(action) || null,
+                };
+            }),
+        };
+    })()"#;
+    eval_json(client, script, window).await
+}
+
+async fn skill_market_add(client: &mut Client, id: &str, window: Option<&str>) -> Result<Value> {
+    let id_lit = js_string_literal(id);
+    let script = format!(
+        r#"(() => {{
+            const id = {id};
+            const card = [...document.querySelectorAll('[data-aijia-skill-card]')]
+                .find(el => el.getAttribute('data-aijia-skill-id') === id);
+            if (!card) return {{
+                ok: false,
+                reason: 'skill_market_card_not_found',
+                id,
+                available: [...document.querySelectorAll('[data-aijia-skill-card]')]
+                    .map(el => el.getAttribute('data-aijia-skill-id')),
+            }};
+            const action = card.querySelector('[data-aijia-skill-market-action="add"]');
+            if (!action) return {{
+                ok: false,
+                reason: 'skill_market_add_action_not_found',
+                id,
+                installed: card.getAttribute('data-aijia-skill-installed') === 'true',
+            }};
+            if (action.disabled) return {{ok: false, reason: 'skill_market_add_disabled', id}};
+            action.click();
+            return {{
+                ok: true,
+                id,
+                installed: card.getAttribute('data-aijia-skill-installed') === 'true',
+            }};
+        }})()"#,
+        id = id_lit,
+    );
+    eval_json(client, &script, window).await
+}
+
+async fn skill_detail_open(client: &mut Client, id: &str, window: Option<&str>) -> Result<Value> {
+    let id_lit = js_string_literal(id);
+    let script = format!(
+        r#"(() => {{
+            const id = {id};
+            const card = [...document.querySelectorAll('[data-aijia-skill-card]')]
+                .find(el => el.getAttribute('data-aijia-skill-id') === id);
+            if (!card) return {{
+                ok: false,
+                reason: 'skill_card_not_found',
+                id,
+                available: [...document.querySelectorAll('[data-aijia-skill-card]')]
+                    .map(el => el.getAttribute('data-aijia-skill-id')),
+            }};
+            card.click();
+            return new Promise((resolve) => {{
+                const deadline = Date.now() + 3000;
+                const poll = () => {{
+                    const detail = document.querySelector('[data-aijia-skill-detail]');
+                    const got = detail?.getAttribute('data-aijia-skill-id') || null;
+                    if (got === id) {{
+                        resolve({{ok: true, id}});
+                    }} else if (Date.now() >= deadline) {{
+                        resolve({{ok: false, reason: 'skill_detail_open_timeout', id, got}});
+                    }} else {{
+                        setTimeout(poll, 100);
+                    }}
+                }};
+                poll();
+            }});
+        }})()"#,
+        id = id_lit,
+    );
+    eval_json(client, &script, window).await
+}
+
+async fn skill_detail_snapshot(client: &mut Client, window: Option<&str>) -> Result<Value> {
+    let script = r#"(() => {
+        const detail = document.querySelector('[data-aijia-skill-detail]');
+        if (!detail) return {ok: false, reason: 'skill_detail_not_open'};
+        const text = (el) => (el?.textContent || '').replace(/\s+/g, ' ').trim();
+        const actions = [...detail.querySelectorAll('[data-aijia-skill-detail-action]')]
+            .map(el => ({
+                action: el.getAttribute('data-aijia-skill-detail-action'),
+                label: text(el),
+                disabled: !!el.disabled,
+            }));
+        const primary = actions.find(a => a.action === 'primary') || actions[actions.length - 1] || null;
+        return {
+            ok: true,
+            id: detail.getAttribute('data-aijia-skill-id') || null,
+            enabled: detail.getAttribute('data-aijia-skill-enabled') === 'true',
+            title: text(document.querySelector('[data-aijia-skill-detail] div[class*="font-bold"]')) || null,
+            primaryAction: primary,
+            secondaryActions: actions.filter(a => a.action !== 'primary'),
+            actions,
+        };
+    })()"#;
+    eval_json(client, script, window).await
+}
+
+async fn skill_picker_open(client: &mut Client, window: Option<&str>) -> Result<Value> {
+    let script = r#"(() => {
+        const itemSnapshot = (el) => {
+            const text = (node) => (node?.textContent || '').replace(/\s+/g, ' ').trim();
+            const id = el.getAttribute('data-aijia-skill-id') || null;
+            const title = text([...el.querySelectorAll('span')]
+                .find(node => String(node.className || '').includes('font-medium'))) || text(el);
+            return {id, title, command: id ? '/' + id : null};
+        };
+        const readItems = () => [...document.querySelectorAll('[data-aijia-skill-picker-item]')]
+            .map(itemSnapshot);
+        const finish = () => ({ok: true, count: readItems().length, items: readItems()});
+        if (document.querySelector('[data-aijia-skill-picker-search]')) return finish();
+        const trigger = document.querySelector('[data-aijia-skill-picker-trigger]');
+        if (!trigger) return {ok: false, reason: 'skill_picker_trigger_not_found'};
+        if (trigger.disabled) return {ok: false, reason: 'skill_picker_trigger_disabled'};
+        trigger.click();
+        return new Promise((resolve) => {
+            const deadline = Date.now() + 3000;
+            const poll = () => {
+                if (document.querySelector('[data-aijia-skill-picker-search]')) {
+                    resolve(finish());
+                } else if (Date.now() >= deadline) {
+                    resolve({ok: false, reason: 'skill_picker_open_timeout'});
+                } else {
+                    setTimeout(poll, 100);
+                }
+            };
+            poll();
+        });
+    })()"#;
+    eval_json(client, script, window).await
+}
+
+async fn slash_suggestions(
+    client: &mut Client,
+    query: &str,
+    window: Option<&str>,
+) -> Result<Value> {
+    let query_lit = js_string_literal(query);
+    let script = format!(
+        r#"(() => {{
+            const query = {query};
+            const itemSnapshot = (el) => {{
+                const text = (node) => (node?.textContent || '').replace(/\s+/g, ' ').trim();
+                const id = el.getAttribute('data-aijia-skill-id') || null;
+                const title = text([...el.querySelectorAll('span')]
+                    .find(node => String(node.className || '').includes('font-medium'))) || text(el);
+                return {{id, title, command: id ? '/' + id : null}};
+            }};
+            const readItems = () => [...document.querySelectorAll('[data-aijia-skill-picker-item]')]
+                .map(itemSnapshot);
+            const setSearchValue = (input) => {{
+                const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+                if (setter) setter.call(input, query);
+                else input.value = query;
+                input.dispatchEvent(new Event('input', {{bubbles: true}}));
+            }};
+            const openFromSlash = () => {{
+                const editor = document.querySelector('.ProseMirror[contenteditable="true"]');
+                if (!editor) return {{ok: false, reason: 'composer_editor_not_found'}};
+                editor.focus();
+                editor.dispatchEvent(new KeyboardEvent('keydown', {{
+                    key: '/',
+                    code: 'Slash',
+                    bubbles: true,
+                    cancelable: true,
+                    composed: true,
+                }}));
+                return {{ok: true}};
+            }};
+            const opened = document.querySelector('[data-aijia-skill-picker-search]') ? {{ok: true}} : openFromSlash();
+            if (!opened.ok) return opened;
+            return new Promise((resolve) => {{
+                const deadline = Date.now() + 3000;
+                const poll = () => {{
+                    const input = document.querySelector('[data-aijia-skill-picker-search]');
+                    if (input) {{
+                        setSearchValue(input);
+                        setTimeout(() => {{
+                            const items = readItems();
+                            resolve({{ok: true, query, count: items.length, suggestions: items}});
+                        }}, 80);
+                    }} else if (Date.now() >= deadline) {{
+                        resolve({{ok: false, reason: 'slash_suggestions_open_timeout'}});
+                    }} else {{
+                        setTimeout(poll, 100);
+                    }}
+                }};
+                poll();
+            }});
+        }})()"#,
+        query = query_lit,
+    );
+    eval_json(client, &script, window).await
+}
+
+async fn sync_builtin_skills(
+    client: &mut Client,
+    mode: &str,
+    window: Option<&str>,
+) -> Result<Value> {
+    let Some(mode) = normalize_skill_sync_mode(mode) else {
+        return Ok(json!({
+            "ok": false,
+            "reason": "invalid_skill_sync_mode",
+            "valid": ["builtin", "local"],
+            "got": mode,
+        }));
+    };
+    let mode_lit = js_string_literal(mode);
+    let script = format!(
+        r#"(() => {{
+            {helper}
+            const mode = {mode};
+            const trigger = document.querySelector('[data-aijia-skill-sync-trigger]');
+            if (!trigger) return {{ok: false, reason: 'skill_sync_trigger_not_found'}};
+            if (trigger.disabled) return {{ok: false, reason: 'skill_sync_trigger_disabled', mode}};
+            __aijia_radixDropdownClick(trigger);
+            return new Promise((resolve) => {{
+                const deadline = Date.now() + 3000;
+                const poll = () => {{
+                    const item = document.querySelector('[data-aijia-skill-sync-action="' + mode + '"]');
+                    if (item) {{
+                        item.click();
+                        resolve({{ok: true, mode, installed: null, skipped: null}});
+                    }} else if (Date.now() >= deadline) {{
+                        resolve({{
+                            ok: false,
+                            reason: 'skill_sync_action_not_found',
+                            mode,
+                            available: [...document.querySelectorAll('[data-aijia-skill-sync-action]')]
+                                .map(el => el.getAttribute('data-aijia-skill-sync-action')),
+                        }});
+                    }} else {{
+                        setTimeout(poll, 100);
+                    }}
+                }};
+                poll();
+            }});
+        }})()"#,
+        helper = RADIX_DROPDOWN_CLICK_HELPER_JS,
+        mode = mode_lit,
+    );
+    eval_json(client, &script, window).await
+}
+
 async fn skill_import_queue(
     client: &mut Client,
     path: &str,
@@ -2629,6 +3065,16 @@ async fn skill_import_pick(
 
 async fn skill_cards(client: &mut Client, window: Option<&str>) -> Result<Value> {
     let script = r#"(() => {
+        const text = (el) => (el?.textContent || '').replace(/\s+/g, ' ').trim();
+        const boolAttr = (el, name) => {
+            const value = el.getAttribute(name);
+            return value == null ? null : value === 'true';
+        };
+        const titleOf = (card) => {
+            const node = [...card.querySelectorAll('span,div')]
+                .find(el => String(el.className || '').includes('font-semibold') && text(el));
+            return text(node) || null;
+        };
         const cards = [...document.querySelectorAll('[data-aijia-skill-card]')];
         return {
             ok: true,
@@ -2636,6 +3082,10 @@ async fn skill_cards(client: &mut Client, window: Option<&str>) -> Result<Value>
             cards: cards.map(c => ({
                 id: c.getAttribute('data-aijia-skill-id') || null,
                 source: c.getAttribute('data-aijia-skill-source') || null,
+                title: titleOf(c),
+                version: c.querySelector('[data-testid="skill-card-version"]')?.textContent?.trim() || null,
+                enabled: boolAttr(c, 'data-aijia-skill-enabled'),
+                installed: boolAttr(c, 'data-aijia-skill-installed'),
             })),
         };
     })()"#;

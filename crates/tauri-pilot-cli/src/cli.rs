@@ -638,6 +638,54 @@ pub(crate) enum AijiaCommand {
         #[arg(long)]
         name: String,
     },
+    /// Semantic alias for `goto skill-center --wait`.
+    /// Opens the skill-center route through the sidebar nav.
+    SkillCenterOpen,
+    /// Click one top-level skill-center tab.
+    /// `--name` accepts `market|builtin|installed` and Chinese aliases.
+    SkillCenterTab {
+        #[arg(long)]
+        name: String,
+    },
+    /// Read the skill cards currently rendered in the active skill-center tab.
+    SkillCenterList,
+    /// Toggle one installed/builtin skill to the requested enabled state.
+    /// Pre: a tab containing the target skill is active.
+    SkillCenterToggle {
+        #[arg(long)]
+        id: String,
+        #[arg(long, action = clap::ArgAction::Set)]
+        enabled: bool,
+    },
+    /// Read market skill cards currently rendered in the market tab.
+    SkillMarketList,
+    /// Click one market card's add/use button.
+    /// Pre: market tab is active.
+    SkillMarketAdd {
+        #[arg(long)]
+        id: String,
+    },
+    /// Open a skill detail page by clicking a rendered skill card.
+    /// Pre: skill-center page is active and the card is visible.
+    SkillDetailOpen {
+        #[arg(long)]
+        id: String,
+    },
+    /// Snapshot the currently open skill detail page.
+    SkillDetailSnapshot,
+    /// Open the chat composer skill picker and snapshot its visible items.
+    SkillPickerOpen,
+    /// Open the composer slash skill suggestions and filter by query.
+    SlashSuggestions {
+        #[arg(long)]
+        query: String,
+    },
+    /// Click the skill-center sync/update menu action.
+    /// `--mode` accepts `builtin|local`; default is `builtin`.
+    SyncBuiltinSkills {
+        #[arg(long, default_value = "builtin")]
+        mode: String,
+    },
     /// Queue a single absolute path so the next call to skill-center's
     /// `openDialog()` (inside `handleImportDirectory` / `handleImportArchive`)
     /// returns it instead of opening the OS dialog. Dev-only — relies on
@@ -1542,6 +1590,163 @@ mod tests {
             assert_eq!(selector.as_deref(), Some("[data-aijia-message-list]"));
         } else {
             panic!("Expected aijia screenshot command with selector");
+        }
+    }
+
+    #[test]
+    fn test_parse_aijia_skill_center_open() {
+        let cli = Cli::parse_from(["tauri-pilot", "aijia", "skill-center-open"]);
+        assert!(matches!(
+            cli.command,
+            Command::Aijia {
+                command: AijiaCommand::SkillCenterOpen
+            }
+        ));
+    }
+
+    #[test]
+    fn test_parse_aijia_skill_center_tab() {
+        let cli = Cli::parse_from([
+            "tauri-pilot",
+            "aijia",
+            "skill-center-tab",
+            "--name",
+            "installed",
+        ]);
+        if let Command::Aijia {
+            command: AijiaCommand::SkillCenterTab { name },
+        } = cli.command
+        {
+            assert_eq!(name, "installed");
+        } else {
+            panic!("Expected aijia skill-center-tab command");
+        }
+    }
+
+    #[test]
+    fn test_parse_aijia_skill_center_toggle() {
+        let cli = Cli::parse_from([
+            "tauri-pilot",
+            "aijia",
+            "skill-center-toggle",
+            "--id",
+            "create-skill",
+            "--enabled",
+            "false",
+        ]);
+        if let Command::Aijia {
+            command: AijiaCommand::SkillCenterToggle { id, enabled },
+        } = cli.command
+        {
+            assert_eq!(id, "create-skill");
+            assert!(!enabled);
+        } else {
+            panic!("Expected aijia skill-center-toggle command");
+        }
+    }
+
+    #[test]
+    fn test_parse_aijia_skill_market_add() {
+        let cli = Cli::parse_from([
+            "tauri-pilot",
+            "aijia",
+            "skill-market-add",
+            "--id",
+            "deep-research",
+        ]);
+        if let Command::Aijia {
+            command: AijiaCommand::SkillMarketAdd { id },
+        } = cli.command
+        {
+            assert_eq!(id, "deep-research");
+        } else {
+            panic!("Expected aijia skill-market-add command");
+        }
+    }
+
+    #[test]
+    fn test_parse_aijia_skill_detail_open() {
+        let cli = Cli::parse_from([
+            "tauri-pilot",
+            "aijia",
+            "skill-detail-open",
+            "--id",
+            "bid-writing",
+        ]);
+        if let Command::Aijia {
+            command: AijiaCommand::SkillDetailOpen { id },
+        } = cli.command
+        {
+            assert_eq!(id, "bid-writing");
+        } else {
+            panic!("Expected aijia skill-detail-open command");
+        }
+    }
+
+    #[test]
+    fn test_parse_aijia_skill_snapshot_commands() {
+        let cli = Cli::parse_from(["tauri-pilot", "aijia", "skill-center-list"]);
+        assert!(matches!(
+            cli.command,
+            Command::Aijia {
+                command: AijiaCommand::SkillCenterList
+            }
+        ));
+
+        let cli = Cli::parse_from(["tauri-pilot", "aijia", "skill-market-list"]);
+        assert!(matches!(
+            cli.command,
+            Command::Aijia {
+                command: AijiaCommand::SkillMarketList
+            }
+        ));
+
+        let cli = Cli::parse_from(["tauri-pilot", "aijia", "skill-detail-snapshot"]);
+        assert!(matches!(
+            cli.command,
+            Command::Aijia {
+                command: AijiaCommand::SkillDetailSnapshot
+            }
+        ));
+
+        let cli = Cli::parse_from(["tauri-pilot", "aijia", "skill-picker-open"]);
+        assert!(matches!(
+            cli.command,
+            Command::Aijia {
+                command: AijiaCommand::SkillPickerOpen
+            }
+        ));
+    }
+
+    #[test]
+    fn test_parse_aijia_slash_suggestions() {
+        let cli = Cli::parse_from([
+            "tauri-pilot",
+            "aijia",
+            "slash-suggestions",
+            "--query",
+            "report",
+        ]);
+        if let Command::Aijia {
+            command: AijiaCommand::SlashSuggestions { query },
+        } = cli.command
+        {
+            assert_eq!(query, "report");
+        } else {
+            panic!("Expected aijia slash-suggestions command");
+        }
+    }
+
+    #[test]
+    fn test_parse_aijia_sync_builtin_skills_default_mode() {
+        let cli = Cli::parse_from(["tauri-pilot", "aijia", "sync-builtin-skills"]);
+        if let Command::Aijia {
+            command: AijiaCommand::SyncBuiltinSkills { mode },
+        } = cli.command
+        {
+            assert_eq!(mode, "builtin");
+        } else {
+            panic!("Expected aijia sync-builtin-skills command");
         }
     }
 }
